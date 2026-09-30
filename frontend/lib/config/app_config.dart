@@ -3,7 +3,7 @@ class AppConfig {
   // flutter run --dart-define=SOCKET_URL=https://your-server.com
   static const String socketUrl = String.fromEnvironment(
     'SOCKET_URL',
-    defaultValue: 'http://localhost:3001',
+    defaultValue: 'http://20.198.226.66:3001',
   );
 
   // Chat settings
