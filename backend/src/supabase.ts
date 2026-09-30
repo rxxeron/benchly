@@ -1,0 +1,41 @@
+import { createClient } from '@supabase/supabase-js';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+// We use the Service Role Key in the backend so it can securely fetch 
+// user data and process batch database writes without RLS blocking it.
+export const supabase = createClient(
+    process.env.SUPABASE_URL || 'https://placeholder.supabase.co',
+    process.env.SUPABASE_SERVICE_ROLE_KEY || 'placeholder_key'
+);
+
+/**
+ * Validates a user's JWT and fetches their private profile (gender, alias, streaks)
+ */
+export async function authenticateSocket(token: string) {
+    // 1. Verify the JWT token
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    
+    if (authError || !user) {
+        throw new Error('Authentication failed');
+    }
+
+    // 2. Fetch their generated profile from the users table
+    const { data: profile, error: dbError } = await supabase
+        .from('users')
+        .select('id, generated_alias, gender, streak_count')
+        .eq('id', user.id)
+        .single();
+
+    if (dbError || !profile) {
+        throw new Error('User profile not found');
+    }
+
+    return {
+        id: profile.id,
+        alias: profile.generated_alias,
+        gender: profile.gender,
+        streak_count: profile.streak_count
+    };
+}
