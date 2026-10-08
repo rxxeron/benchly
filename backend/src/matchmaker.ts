@@ -5,8 +5,23 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Connect to Upstash Serverless Redis
-export const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+// Connect to Redis (Upstash in dev or Localhost in production)
+export const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
+    maxRetriesPerRequest: 3,
+    lazyConnect: false,
+    retryStrategy(times) {
+        if (times > 5) return null; // Stop infinite flood if offline
+        return Math.min(times * 500, 2000);
+    }
+});
+
+redis.on('connect', () => {
+    console.log('⚡ Redis connected successfully.');
+});
+
+redis.on('error', (err) => {
+    console.warn('⚠️ Redis connection notice:', err.message);
+});
 
 /**
  * Handles 1v1 matchmaking logic

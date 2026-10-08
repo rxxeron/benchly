@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'admin_analytics_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -422,11 +423,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ]),
 
+            _buildSectionHeader('CAMPUS INTELLIGENCE'),
+            _buildGroup([
+              _buildListTile(
+                title: 'Campus Analytics Dashboard',
+                trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Color(0xFF10B981)),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const AdminAnalyticsScreen()),
+                  );
+                },
+              ),
+            ]),
+
             _buildSectionHeader('ABOUT'),
             _buildGroup([
               _buildListTile(
                 title: 'App Version',
-                trailing: Text('Benchly v1.0.0', style: TextStyle(color: Colors.white.withValues(alpha: 0.5))),
+                trailing: Text('Benchly v1.1.0 (EWU Edition)', style: TextStyle(color: Colors.white.withValues(alpha: 0.5))),
               ),
             ]),
             

@@ -3,6 +3,10 @@ export interface UserProfile {
     alias: string;         // The generated public name (e.g., "Silent Panther")
     gender: 'male' | 'female' | 'other';
     streak_count: number;
+    dept_code?: string;    // 'CSE', 'BBA', 'EEE', etc.
+    batch_year?: string;   // '2022', '2023', etc.
+    badge?: string;        // 'CSE \'22'
+    email?: string;
 }
 
 export interface ChatMessage {
@@ -16,7 +20,7 @@ export interface ChatMessage {
 export interface RoomState {
     id: string;
     type: '1v1' | 'group';
-    users: UserProfile[];
-    expiresAt: number;
-    extensionRequests: string[]; // Array of user IDs who requested an extension
+    users: string[];
+    createdAt: number;
+    icebreaker?: string;
 }

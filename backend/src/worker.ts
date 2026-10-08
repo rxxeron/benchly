@@ -5,7 +5,17 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 // Connect to Upstash Redis & Supabase
-const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
+    maxRetriesPerRequest: 3,
+    lazyConnect: false,
+    retryStrategy(times) {
+        if (times > 5) return null;
+        return Math.min(times * 500, 2000);
+    }
+});
+redis.on('error', (err) => {
+    console.warn('⚠️ Worker Redis notice:', err.message);
+});
 const supabase = createClient(
     process.env.SUPABASE_URL || 'https://placeholder.supabase.co',
     process.env.SUPABASE_SERVICE_ROLE_KEY || 'placeholder_key'
