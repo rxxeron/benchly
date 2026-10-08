@@ -5,7 +5,7 @@ import cors from 'cors';
 import { randomUUID } from 'crypto';
 import dotenv from 'dotenv';
 import { authenticateSocket, supabase } from './supabase';
-import { redis, findOrCreate1v1Match, applyCooldown } from './matchmaker';
+import { redis, findOrCreate1v1Match, applyCooldown, removeUserFromQueues } from './matchmaker';
 import { AnalyticsEngine } from './analytics';
 import { getRandomIcebreaker, EWU_CAMPUS_ICEBREAKERS } from './ewu_helper';
 
@@ -25,8 +25,9 @@ const io = new Server(httpServer, {
 
 const analytics = new AnalyticsEngine(redis);
 
-// Mappings for active users, room metadata, and timeouts
+// Mappings for active users, socket routing, and rooms
 const activeUsers = new Map<string, any>();
+const userSocketMap = new Map<string, string>();
 const roomTimeouts = new Map<string, NodeJS.Timeout[]>();
 const roomMembers = new Map<string, { user1: string; user2: string; startTime: number; partner1Badge?: string; partner2Badge?: string }>();
 const handshakeVotes = new Map<string, Set<string>>();
@@ -83,6 +84,9 @@ io.on('connection', async (socket) => {
     try {
         const profile = await authenticateSocket(token);
         activeUsers.set(socket.id, profile);
+        userSocketMap.set(profile.id, socket.id);
+        socket.join(profile.id); // Guarantee user can be messaged by user ID
+
         socket.emit('authenticated', {
             alias: profile.alias,
             streak: profile.streak_count,
@@ -98,9 +102,10 @@ io.on('connection', async (socket) => {
 
     // 2. Matchmaking Intent
     socket.on('join_1v1_queue', async (data) => {
-        const seeking = data.seeking || 'any'; // 'male', 'female', or 'any'
+        const seeking = data?.seeking || 'any';
         
         try {
+            await removeUserFromQueues(user.id);
             const match = await findOrCreate1v1Match(user, seeking);
             
             if (match.roomId) {
@@ -115,13 +120,23 @@ io.on('connection', async (socket) => {
                     partnerBadge: 'EWU Student'
                 });
                 
-                // Notify the other waiting user
+                // Notify the other waiting user via both room and direct socket
                 io.to(match.matchedUser!).emit('match_found', { 
                     roomId: match.roomId, 
                     role: 'joiner',
                     icebreaker: icebreaker,
                     partnerBadge: user.badge || 'EWU Student'
                 });
+
+                const otherSocketId = userSocketMap.get(match.matchedUser!);
+                if (otherSocketId) {
+                    io.to(otherSocketId).emit('match_found', { 
+                        roomId: match.roomId, 
+                        role: 'joiner',
+                        icebreaker: icebreaker,
+                        partnerBadge: user.badge || 'EWU Student'
+                    });
+                }
                 
                 roomMembers.set(match.roomId, { 
                     user1: user.id, 
@@ -160,6 +175,12 @@ io.on('connection', async (socket) => {
             }
         } catch (error: any) {
             socket.emit('error', { message: error.message });
+        }
+    });
+
+    socket.on('cancel_1v1_queue', async () => {
+        if (user && user.id) {
+            await removeUserFromQueues(user.id);
         }
     });
 
@@ -304,6 +325,8 @@ io.on('connection', async (socket) => {
         activeUsers.delete(socket.id);
         
         if (user && user.id) {
+            await removeUserFromQueues(user.id);
+            userSocketMap.delete(user.id);
             for (const [roomId, members] of roomMembers.entries()) {
                 if (members.user1 === user.id || members.user2 === user.id) {
                     const existing = roomTimeouts.get(roomId);

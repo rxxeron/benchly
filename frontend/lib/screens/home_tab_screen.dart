@@ -127,7 +127,7 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
 
   void _cancelSearching() {
     setState(() => isSearching = false);
-    // Disconnecting/reconnecting refreshes queue presence
+    socket.emit('cancel_1v1_queue');
   }
 
   void _updateMatchPref(String pref) async {
