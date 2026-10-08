@@ -7,6 +7,7 @@ class ChatRoomScreen extends StatefulWidget {
   final io.Socket socket;
   final String roomId;
   final String myAlias;
+  final String partnerAlias;
   final String partnerBadge;
   final String? initialIcebreaker;
 
@@ -15,6 +16,7 @@ class ChatRoomScreen extends StatefulWidget {
     required this.socket,
     required this.roomId,
     required this.myAlias,
+    this.partnerAlias = 'Anonymous Student',
     this.partnerBadge = 'EWU Student',
     this.initialIcebreaker,
   });
@@ -40,6 +42,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   @override
   void initState() {
     super.initState();
+    widget.socket.emit('join_room', widget.roomId);
     _currentIcebreaker = widget.initialIcebreaker;
     _startTimer();
     _setupListeners();
@@ -434,13 +437,15 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                 children: [
                   Row(
                     children: [
-                      const Text(
-                        'Student',
-                        style: TextStyle(
+                      Text(
+                        widget.partnerAlias,
+                        style: const TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w700,
                           color: Colors.white,
                         ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(width: 6),
                       Container(

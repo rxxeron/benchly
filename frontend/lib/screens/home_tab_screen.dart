@@ -96,6 +96,7 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
             socket: socket,
             roomId: data['roomId'],
             myAlias: currentAlias ?? 'Anonymous',
+            partnerAlias: data['partnerAlias'] ?? 'Anonymous Student',
             partnerBadge: data['partnerBadge'] ?? 'EWU Student',
             initialIcebreaker: data['icebreaker'],
           ),

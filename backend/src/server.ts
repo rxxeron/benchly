@@ -112,30 +112,37 @@ io.on('connection', async (socket) => {
                 // We found a match! Generate campus icebreaker
                 const icebreaker = getRandomIcebreaker();
                 
+                // 1. Join creator to room
                 socket.join(match.roomId);
+
+                // 2. Lookup joiner socket & profile, and join them to room immediately
+                const otherSocketId = userSocketMap.get(match.matchedUser!);
+                const otherSocket = otherSocketId ? io.sockets.sockets.get(otherSocketId) : null;
+                if (otherSocket) {
+                    otherSocket.join(match.roomId);
+                }
+                const otherProfile = otherSocketId ? activeUsers.get(otherSocketId) : null;
+
+                // 3. Dispatch to creator
                 socket.emit('match_found', { 
                     roomId: match.roomId, 
                     role: 'creator',
                     icebreaker: icebreaker,
-                    partnerBadge: 'EWU Student'
+                    partnerAlias: otherProfile?.alias || 'Anonymous Student',
+                    partnerBadge: otherProfile?.badge || 'EWU Student'
                 });
                 
-                // Notify the other waiting user via both room and direct socket
-                io.to(match.matchedUser!).emit('match_found', { 
+                // 4. Dispatch to joiner
+                const joinerPayload = { 
                     roomId: match.roomId, 
                     role: 'joiner',
                     icebreaker: icebreaker,
+                    partnerAlias: user.alias || 'Anonymous Student',
                     partnerBadge: user.badge || 'EWU Student'
-                });
-
-                const otherSocketId = userSocketMap.get(match.matchedUser!);
+                };
+                io.to(match.matchedUser!).emit('match_found', joinerPayload);
                 if (otherSocketId) {
-                    io.to(otherSocketId).emit('match_found', { 
-                        roomId: match.roomId, 
-                        role: 'joiner',
-                        icebreaker: icebreaker,
-                        partnerBadge: user.badge || 'EWU Student'
-                    });
+                    io.to(otherSocketId).emit('match_found', joinerPayload);
                 }
                 
                 roomMembers.set(match.roomId, { 
