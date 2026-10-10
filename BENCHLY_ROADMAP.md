@@ -45,17 +45,13 @@
 
 ## 2. Future Improvements Roadmap (To Build Next)
 
-### 🚀 Phase 2: Campus Virality & Social Loops
-- [ ] **BenchLipi (Anonymous Campus Micro-Feed):**
-  - Public anonymous confession and shoutout board exclusive to EWU students.
-  - Topic tags: `#CafeteriaAdda`, `#MidtermStress`, `#CrushAlert`, `#CourseReview`, `#LostAndFound`.
-  - Heart reactions, upvotes, and threaded anonymous replies.
-- [ ] **Personalized Letterbox Link (`benchly.app/@alias`):**
-  - Allow students to generate a shareable web link to put on their Instagram/Facebook story for receiving anonymous letters from fellow EWU students.
+### 🚀 Phase 2: Campus Engagement & Matchmaking Features
 - [ ] **Midterm & Finals Survival Mode:**
   - Specialized queue during exam weeks: "Study Buddy Cram Match" pairing students by department for 25-minute Pomodoro study sprints.
 - [ ] **Midnight Adda Rush Hour (10:00 PM – 2:00 AM):**
   - Boosted hours with accelerated matching, neon glow particle effects, and night owl topics.
+- [ ] **Department-Filtered Matchmaking Mode:**
+  - Option to match specifically with someone from your department (e.g. CSE with CSE) or cross-department (e.g. CSE with BBA).
 
 ### 💎 Phase 3: The Campus Stones Economy & Gamification
 - [ ] **Campus Stones 💎 Ledger:**
