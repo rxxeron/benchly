@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'home_tab_screen.dart';
-import 'admin_analytics_screen.dart';
+import 'student_analytics_screen.dart';
 import 'settings_screen.dart';
 
 class MainNavigationScreen extends StatefulWidget {
@@ -24,7 +24,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             index: _currentIndex,
             children: [
               const HomeTabScreen(),
-              const AdminAnalyticsScreen(),
+              const StudentAnalyticsScreen(),
               _buildPlaceholderScreen('Stones & Rewards', Icons.diamond_outlined),
               const SettingsScreen(),
             ],
@@ -60,7 +60,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                 BottomNavigationBarItem(
                   icon: Icon(Icons.insights_outlined),
                   activeIcon: Icon(Icons.insights_rounded),
-                  label: 'Analytics',
+                  label: 'Adda Stats',
                 ),
                 BottomNavigationBarItem(
                   icon: Icon(Icons.diamond_outlined),

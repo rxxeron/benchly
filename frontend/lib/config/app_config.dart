@@ -11,7 +11,7 @@ class AppConfig {
   static const int cooldownMinutes = 30;
 
   // Alias regeneration
-  static const int aliasChangeCooldownDays = 30;
+  static const int aliasChangeCooldownDays = 15;
 
   // Message limits
   static const int maxMessageLength = 500;

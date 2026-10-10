@@ -7,6 +7,9 @@ export interface UserProfile {
     batch_year?: string;   // '2022', '2023', etc.
     badge?: string;        // 'CSE \'22'
     email?: string;
+    aliasRotationDue?: boolean;
+    alias_changed_at?: string;
+    alias_change_count?: number;
 }
 
 export interface ChatMessage {

@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Connect to Upstash Redis & Supabase
+// Connect to Redis & Supabase
 const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
     maxRetriesPerRequest: 3,
     lazyConnect: false,
@@ -16,96 +16,87 @@ const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
 redis.on('error', (err) => {
     console.warn('⚠️ Worker Redis notice:', err.message);
 });
+
 const supabase = createClient(
     process.env.SUPABASE_URL || 'https://placeholder.supabase.co',
     process.env.SUPABASE_SERVICE_ROLE_KEY || 'placeholder_key'
 );
 
-const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || '100', 10);
-const CONSUMER_GROUP = 'backbench_persisters';
-const STREAM_KEY = 'messages_stream';
-const CONSUMER_NAME = `worker-${Math.random().toString(36).substring(7)}`;
-
 /**
- * Initializes the Redis Stream Consumer Group.
+ * Benchly Zero-Cost Archiver Worker
+ * Everything lives in-memory on Redis during live chats.
+ * If a room reaches 30 minutes or concluded without being flushed,
+ * this worker writes the ENTIRE transcript in ONE SINGLE ROW to public.room_conversations.
  */
-async function initStream() {
+async function archiveStaleRooms() {
     try {
-        // MKSTREAM creates the stream if it doesn't exist yet
-        await redis.xgroup('CREATE', STREAM_KEY, CONSUMER_GROUP, '0', 'MKSTREAM');
-        console.log('✅ Redis Consumer group ready.');
-    } catch (err: any) {
-        if (!err.message.includes('BUSYGROUP')) {
-            console.error('Error creating consumer group:', err);
-        }
-    }
-}
+        const roomKeys = await redis.keys('room_messages:*');
+        if (roomKeys.length === 0) return;
 
-/**
- * Reads a chunk of messages from Redis, writes to Postgres, and Acknowledges.
- */
-async function processBatch() {
-    try {
-        // 1. Read up to BATCH_SIZE messages, block for 5 seconds if empty
-        const response = await redis.xreadgroup(
-            'GROUP', CONSUMER_GROUP, CONSUMER_NAME,
-            'COUNT', BATCH_SIZE,
-            'BLOCK', 5000,
-            'STREAMS', STREAM_KEY, '>'
-        ) as any;
-
-        if (!response || response.length === 0) return; // No messages, loop again
-
-        const streamData = response[0]; 
-        const messages = streamData[1];
-
-        if (messages.length === 0) return;
-
-        // 2. Map Redis string arrays into Postgres objects
-        const dbPayload = messages.map((msg: any) => {
-            const fields = msg[1]; // ['roomId', '123', 'authorId', '456', 'content', 'hi!']
-            const data: any = {};
-            for (let i = 0; i < fields.length; i += 2) {
-                data[fields[i]] = fields[i + 1];
+        for (const key of roomKeys) {
+            const roomId = key.replace('room_messages:', '');
+            const rawMsgs = await redis.lrange(key, 0, -1);
+            if (!rawMsgs || rawMsgs.length === 0) {
+                await redis.del(key);
+                continue;
             }
 
-            return {
-                room_id: data.roomId,
-                author_id: data.authorId,
-                content: data.content
-            };
-        });
+            const messagesList = rawMsgs.map((m) => {
+                try { return JSON.parse(m); } catch (e) { return null; }
+            }).filter(Boolean);
 
-        // 3. Bulk Insert into Supabase
-        const { error } = await supabase.from('messages').insert(dbPayload);
+            if (messagesList.length === 0) {
+                await redis.del(key);
+                continue;
+            }
 
-        if (error) {
-            console.error('❌ Supabase bulk insert failed:', error.message);
-            // Do NOT acknowledge. The messages stay in the 'pending' list for retry.
-            return; 
+            const firstMsgTime = messagesList[0]?.timestamp || Date.now();
+            const ageMinutes = (Date.now() - firstMsgTime) / (60 * 1000);
+
+            // Archive if session is older than 30 minutes
+            if (ageMinutes >= 30) {
+                const isHandshakeAgreed = (await redis.get(`room:${roomId}:handshake_agreed`)) === 'true';
+
+                // Find distinct user IDs
+                const authorIds = Array.from(new Set(messagesList.map((m: any) => m.author_id).filter(Boolean)));
+                const user1 = authorIds[0] || null;
+                const user2 = authorIds[1] || null;
+
+                const durationSec = Math.round((Date.now() - firstMsgTime) / 1000);
+
+                await supabase.from('room_conversations').insert({
+                    room_id: roomId,
+                    user1_id: user1,
+                    user2_id: user2,
+                    messages: messagesList,
+                    messages_count: messagesList.length,
+                    duration_seconds: durationSec,
+                    handshake_agreed: isHandshakeAgreed,
+                    closed_at: new Date().toISOString()
+                });
+
+                await redis.del(
+                    key,
+                    `room_handshake:${roomId}`,
+                    `room:${roomId}:handshake_agreed`,
+                    `room_extension:${roomId}`
+                );
+                console.log(`💾 Worker archived 30-min room ${roomId} (${messagesList.length} msgs) in 1 row.`);
+            }
         }
-
-        // 4. Acknowledge and clean up Redis
-        const messageIds = messages.map((msg: any) => msg[0]);
-        await redis.xack(STREAM_KEY, CONSUMER_GROUP, ...messageIds);
-        await redis.xdel(STREAM_KEY, ...messageIds); // Free up Redis RAM
-
-        console.log(`💾 Persisted ${messages.length} messages to Database.`);
-
     } catch (err) {
-        console.error('Error in batch processor:', err);
+        console.error('Error in archiveStaleRooms worker:', err);
     }
 }
 
 /**
- * The infinite loop that keeps the worker alive.
+ * Main worker loop running every 60 seconds
  */
 async function runWorker() {
-    console.log('🚀 Starting Backbench Batch Worker...');
-    await initStream();
-    
+    console.log('🚀 Starting Benchly 30-Minute Room Archiver Worker...');
     while (true) {
-        await processBatch();
+        await archiveStaleRooms();
+        await new Promise((res) => setTimeout(res, 60 * 1000));
     }
 }
 

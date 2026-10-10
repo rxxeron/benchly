@@ -25,6 +25,7 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
 
   Timer? _searchCountdownTimer;
   int _searchCountdown = 35;
+  bool _rotationPromptShown = false;
 
   @override
   void initState() {
@@ -110,9 +111,29 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
       debugPrint('🎉 [Socket] Authenticated: $data');
       if (mounted) {
         setState(() {
-          currentAlias ??= data['alias'];
+          currentAlias = data['alias'] ?? currentAlias;
           userBadge ??= data['badge'] ?? 'EWU Student';
         });
+
+        if (data['aliasRotationDue'] == true) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _promptAliasRotation();
+          });
+        }
+      }
+    });
+
+    socket.on('alias_updated', (data) {
+      if (mounted && data?['newAlias'] != null) {
+        setState(() {
+          currentAlias = data['newAlias'];
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Your alias was updated to: ${data['newAlias']}'),
+            backgroundColor: const Color(0xFF10B981),
+          ),
+        );
       }
     });
 
@@ -324,6 +345,74 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
           .update({'match_preference': pref})
           .eq('id', user.id);
     }
+  }
+
+  void _promptAliasRotation() {
+    if (_rotationPromptShown || !mounted) return;
+    _rotationPromptShown = true;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF121622),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Text('⏳', style: TextStyle(fontSize: 22)),
+            SizedBox(width: 8),
+            Text(
+              '15-Day Alias Rotation',
+              style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Your alias "$currentAlias" is 15+ days old. To ensure complete privacy and anonymity, Benchly rotates nicknames every 15 days.',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 13, height: 1.4),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF10B981).withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFF10B981).withValues(alpha: 0.25)),
+              ),
+              child: const Text(
+                'Safety note: A permanent audit history is kept to investigate any harassment reports.',
+                style: TextStyle(color: Color(0xFF34D399), fontSize: 11),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              socket.emit('rotate_alias', {'changeType': 'auto'});
+            },
+            child: Text('Auto-Rotate Now', style: TextStyle(color: Colors.white.withValues(alpha: 0.6))),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              socket.emit('rotate_alias', {'changeType': 'manual'});
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF10B981),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text('Roll New Alias'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override

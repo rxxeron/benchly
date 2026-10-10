@@ -29,9 +29,93 @@ const analytics = new AnalyticsEngine(redis);
 const activeUsers = new Map<string, any>();
 const userSocketMap = new Map<string, string>();
 const roomTimeouts = new Map<string, NodeJS.Timeout[]>();
-const roomMembers = new Map<string, { user1: string; user2: string; startTime: number; partner1Badge?: string; partner2Badge?: string }>();
+interface RoomSessionData {
+    user1: string;
+    user2: string;
+    user1Alias?: string;
+    user2Alias?: string;
+    startTime: number;
+    user1Messages: number;
+    user2Messages: number;
+    recorded?: boolean;
+}
+
+const roomMembers = new Map<string, RoomSessionData>();
 const handshakeVotes = new Map<string, Set<string>>();
 const queueTimeouts = new Map<string, NodeJS.Timeout>();
+
+async function saveRoomSession(roomId: string) {
+    const mem = roomMembers.get(roomId);
+    if (!mem || mem.recorded) return;
+    mem.recorded = true;
+
+    const durationSec = Math.max(1, Math.round((Date.now() - mem.startTime) / 1000));
+    try {
+        // 1. Fetch entire chat message transcript from Redis
+        const rawMsgs = await redis.lrange(`room_messages:${roomId}`, 0, -1);
+        const messagesList = rawMsgs.map((m) => {
+            try { return JSON.parse(m); } catch (e) { return null; }
+        }).filter(Boolean);
+
+        const isHandshakeAgreed = (await redis.get(`room:${roomId}:handshake_agreed`)) === 'true';
+
+        // 2. Persist entire chat session in ONE SINGLE ROW in room_conversations
+        await supabase.from('room_conversations').insert({
+            room_id: roomId,
+            user1_id: mem.user1,
+            user2_id: mem.user2,
+            user1_alias: mem.user1Alias || 'Anonymous Student',
+            user2_alias: mem.user2Alias || 'Anonymous Student',
+            messages: messagesList,
+            messages_count: messagesList.length,
+            duration_seconds: durationSec,
+            handshake_agreed: isHandshakeAgreed,
+            closed_at: new Date().toISOString()
+        });
+
+        // 3. Persist individual student engagement statistics in chat_sessions
+        await supabase.from('chat_sessions').insert([
+            {
+                room_id: roomId,
+                user_id: mem.user1,
+                partner_id: mem.user2,
+                messages_sent: mem.user1Messages,
+                messages_received: mem.user2Messages,
+                duration_seconds: durationSec
+            },
+            {
+                room_id: roomId,
+                user_id: mem.user2,
+                partner_id: mem.user1,
+                messages_sent: mem.user2Messages,
+                messages_received: mem.user1Messages,
+                duration_seconds: durationSec
+            }
+        ]);
+
+        // 4. Free Redis cache RAM for this concluded room
+        await redis.del(
+            `room_messages:${roomId}`,
+            `room_handshake:${roomId}`,
+            `room:${roomId}:handshake_agreed`,
+            `room_extension:${roomId}`
+        );
+        console.log(`💾 Persisted entire room chat (${messagesList.length} msgs) in 1 row to Supabase for room ${roomId}`);
+    } catch (err) {
+        console.error('Failed to save room conversation / chat_sessions:', err);
+    }
+}
+
+// 30-minute flusher for long active bench sessions or fulfilling cache
+setInterval(async () => {
+    const now = Date.now();
+    for (const [roomId, mem] of roomMembers.entries()) {
+        if (!mem.recorded && (now - mem.startTime) >= 30 * 60 * 1000) {
+            console.log(`⏱️ 30-minute threshold reached for room ${roomId}. Archiving whole chat to Supabase.`);
+            await saveRoomSession(roomId);
+        }
+    }
+}, 60 * 1000);
 
 const rateLimitMap = new Map<string, number>();
 setInterval(() => rateLimitMap.clear(), 1000);
@@ -69,6 +153,25 @@ app.get('/api/icebreakers', (req, res) => {
     res.json({ icebreakers: EWU_CAMPUS_ICEBREAKERS });
 });
 
+// Student Engagement Analytics (Daily, Weekly, Monthly)
+app.get('/api/student/analytics', async (req, res) => {
+    const userId = req.query.userId as string;
+    const timeframe = (req.query.timeframe as string) || 'weekly';
+    if (!userId) {
+        return res.status(400).json({ error: 'Missing userId parameter' });
+    }
+    try {
+        const { data, error } = await supabase.rpc('get_student_analytics', {
+            p_user_id: userId,
+            p_timeframe: timeframe
+        });
+        if (error) throw error;
+        res.json(data);
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ==========================================
 // WebSocket Real-Time Gateway
 // ==========================================
@@ -92,7 +195,10 @@ io.on('connection', async (socket) => {
             alias: profile.alias,
             streak: profile.streak_count,
             badge: profile.badge,
-            dept: profile.dept_code
+            dept: profile.dept_code,
+            aliasRotationDue: profile.aliasRotationDue,
+            aliasChangedAt: profile.alias_changed_at,
+            aliasChangeCount: profile.alias_change_count
         });
     } catch (err) {
         console.error('Auth failed for socket', socket.id);
@@ -100,6 +206,25 @@ io.on('connection', async (socket) => {
     }
 
     const user = activeUsers.get(socket.id);
+
+    // 1.5 Handle Alias Rotation
+    socket.on('rotate_alias', async (data, callback) => {
+        try {
+            const { data: res, error } = await supabase.rpc('rotate_user_alias', {
+                p_user_id: user.id,
+                p_new_alias: data?.newAlias || null,
+                p_change_type: data?.changeType || 'manual'
+            });
+            if (error) throw error;
+            user.alias = res.new_alias;
+            activeUsers.set(socket.id, user);
+            if (callback) callback({ success: true, newAlias: res.new_alias });
+            socket.emit('alias_updated', { newAlias: res.new_alias });
+        } catch (e: any) {
+            if (callback) callback({ success: false, error: e.message });
+            socket.emit('alias_error', { message: e.message });
+        }
+    });
 
     // 2. Matchmaking Intent
     socket.on('join_1v1_queue', async (data) => {
@@ -157,7 +282,11 @@ io.on('connection', async (socket) => {
                 roomMembers.set(match.roomId, { 
                     user1: user.id, 
                     user2: match.matchedUser!,
-                    startTime: Date.now()
+                    user1Alias: user.alias || 'Anonymous Student',
+                    user2Alias: otherProfile?.alias || 'Anonymous Student',
+                    startTime: Date.now(),
+                    user1Messages: 0,
+                    user2Messages: 0
                 });
 
                 // Record telemetry
@@ -168,10 +297,12 @@ io.on('connection', async (socket) => {
                     io.to(match.roomId!).emit('chat_ending_soon');
                 }, CHAT_WARNING_MS);
                 
-                const closeTimeout = setTimeout(() => {
+                const closeTimeout = setTimeout(async () => {
                     io.to(match.roomId!).emit('chat_closed');
                     io.in(match.roomId!).socketsLeave(match.roomId!);
                     
+                    await saveRoomSession(match.roomId!);
+
                     const durationSec = Math.round((Date.now() - (roomMembers.get(match.roomId!)?.startTime || Date.now())) / 1000);
                     analytics.recordEvent('chat_completed', user.dept_code, user.batch_year, durationSec);
 
@@ -219,6 +350,23 @@ io.on('connection', async (socket) => {
     socket.on('join_room', (roomId) => {
         socket.join(roomId);
         io.to(roomId).emit('room_ready');
+    });
+
+    // Handle user exiting the bench early
+    socket.on('leave_room', async (roomId) => {
+        socket.leave(roomId);
+        socket.to(roomId).emit('partner_left', {
+            alias: user?.alias || 'Your partner',
+            reason: 'left_bench'
+        });
+
+        await saveRoomSession(roomId);
+
+        const existing = roomTimeouts.get(roomId);
+        if (existing) existing.forEach(clearTimeout);
+        roomTimeouts.delete(roomId);
+        roomMembers.delete(roomId);
+        handshakeVotes.delete(roomId);
     });
 
     socket.on('typing', (roomId) => {
@@ -297,6 +445,13 @@ io.on('connection', async (socket) => {
             }
         }
 
+        // Increment user message count for engagement metrics
+        const mem = roomMembers.get(roomId);
+        if (mem) {
+            if (mem.user1 === user.id) mem.user1Messages++;
+            else if (mem.user2 === user.id) mem.user2Messages++;
+        }
+
         // Broadcast to the room (showing ONLY the alias, never the DB ID)
         io.to(roomId).emit('new_message', {
             id: messageId,
@@ -305,11 +460,23 @@ io.on('connection', async (socket) => {
             timestamp: Date.now()
         });
 
-        // Track message event
-        analytics.recordEvent('message_sent', user.dept_code, user.batch_year);
+        // In-memory Redis list per room: Pure memory, ZERO database queries during live chat!
+        const msgRecord = {
+            id: messageId,
+            author_id: user.id,
+            author_alias: user.alias,
+            content: safeContent,
+            timestamp: Date.now()
+        };
+        await redis.rpush(`room_messages:${roomId}`, JSON.stringify(msgRecord));
+        await redis.expire(`room_messages:${roomId}`, 7200);
 
-        // Redis Stream consumer persists messages (retained 90 days for safety complaints)
-        redis.xadd('messages_stream', '*', 'roomId', roomId, 'authorId', user.id, 'content', safeContent);
+        // Check if cache is fulfilling (e.g. 100 messages reached in this single room)
+        const currentMsgCount = await redis.llen(`room_messages:${roomId}`);
+        if (currentMsgCount >= 100) {
+            console.log(`📦 Cache threshold (100 msgs) reached for room ${roomId}. Archiving whole chat to Supabase.`);
+            await saveRoomSession(roomId);
+        }
     });
 
     // 7. Extend Chat
@@ -332,10 +499,12 @@ io.on('connection', async (socket) => {
                 io.to(roomId).emit('chat_ending_soon');
             }, CHAT_WARNING_MS);
             
-            const closeTimeout = setTimeout(() => {
+            const closeTimeout = setTimeout(async () => {
                 io.to(roomId).emit('chat_closed');
                 io.in(roomId).socketsLeave(roomId);
                 
+                await saveRoomSession(roomId);
+
                 const members = roomMembers.get(roomId);
                 if (members) {
                     const durationSec = Math.round((Date.now() - members.startTime) / 1000);
@@ -367,6 +536,13 @@ io.on('connection', async (socket) => {
             userSocketMap.delete(user.id);
             for (const [roomId, members] of roomMembers.entries()) {
                 if (members.user1 === user.id || members.user2 === user.id) {
+                    io.to(roomId).emit('partner_left', {
+                        alias: user?.alias || 'Your partner',
+                        reason: 'disconnected'
+                    });
+
+                    await saveRoomSession(roomId);
+
                     const existing = roomTimeouts.get(roomId);
                     if (existing) {
                         existing.forEach(clearTimeout);

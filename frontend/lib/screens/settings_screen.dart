@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../config/app_config.dart';
 import 'admin_analytics_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -88,29 +90,127 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final n = _noun[random.nextInt(_noun.length)];
     final num = random.nextInt(90) + 10;
     final newAlias = '$a $n $num';
-    final now = DateTime.now().toUtc().toIso8601String();
-    final newCount = _aliasChangeCount + 1;
 
     try {
-      await Supabase.instance.client.from('users').update({
-        'generated_alias': newAlias,
-        'alias_changed_at': now,
-        'alias_change_count': newCount,
-      }).eq('id', user.id);
+      final res = await Supabase.instance.client.rpc('rotate_user_alias', params: {
+        'p_user_id': user.id,
+        'p_new_alias': newAlias,
+        'p_change_type': 'manual',
+      });
+
+      final parsed = res is String ? jsonDecode(res) : Map<String, dynamic>.from(res);
+      final assignedAlias = parsed['new_alias'] ?? newAlias;
 
       if (mounted) {
         setState(() {
-          _currentAlias = newAlias;
+          _currentAlias = assignedAlias;
           _aliasChangedAt = DateTime.now();
-          _aliasChangeCount = newCount;
+          _aliasChangeCount = _aliasChangeCount + 1;
         });
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Alias updated successfully!')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Alias updated to: $assignedAlias'),
+            backgroundColor: const Color(0xFF10B981),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Error regenerating alias')));
+        final isCooldown = e.toString().contains('cooldown');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(isCooldown ? '15-day cooldown active. Please wait.' : 'Error regenerating alias: $e'),
+            backgroundColor: const Color(0xFFEF4444),
+          ),
+        );
       }
     }
+  }
+
+  void _showAliasHistoryModal() {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF121622),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) {
+        return FutureBuilder<List<Map<String, dynamic>>>(
+          future: Supabase.instance.client
+              .from('alias_history')
+              .select('*')
+              .eq('user_id', user.id)
+              .order('created_at', ascending: false),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const SizedBox(
+                height: 250,
+                child: Center(child: CircularProgressIndicator(color: Color(0xFF10B981))),
+              );
+            }
+            final list = snapshot.data ?? [];
+            return Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.history_rounded, color: Color(0xFF10B981), size: 20),
+                      SizedBox(width: 8),
+                      Text(
+                        'Alias Rotation History',
+                        style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Audit records retained for safety & harassment investigations.',
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 11),
+                  ),
+                  const SizedBox(height: 16),
+                  if (list.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 24),
+                      child: Center(
+                        child: Text(
+                          'No alias changes recorded yet.',
+                          style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 13),
+                        ),
+                      ),
+                    )
+                  else
+                    Flexible(
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: list.length,
+                        separatorBuilder: (_, _) => Divider(color: Colors.white.withValues(alpha: 0.05)),
+                        itemBuilder: (context, i) {
+                          final item = list[i];
+                          final created = DateTime.tryParse(item['created_at'] ?? '')?.toLocal();
+                          final dateStr = created != null ? '${created.day}/${created.month}/${created.year}' : '';
+                          final type = item['change_type'] == 'auto' ? 'Auto-rotated' : 'Manual change';
+                          return ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(
+                              '${item['old_alias']} ➔ ${item['new_alias']}',
+                              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                            ),
+                            subtitle: Text('$type • $dateStr', style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11)),
+                          );
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<void> _logout() async {
@@ -149,7 +249,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   int _daysUntilAliasChange() {
     // 1st alias change is completely free anytime (0 wait)
     if (_aliasChangeCount == 0 || _aliasChangedAt == null) return 0;
-    final nextChangeDate = _aliasChangedAt!.add(const Duration(days: 30));
+    final nextChangeDate = _aliasChangedAt!.add(Duration(days: AppConfig.aliasChangeCooldownDays));
     final diff = nextChangeDate.difference(DateTime.now());
     if (diff.isNegative) return 0;
     final days = (diff.inSeconds / (24 * 3600)).ceil();
@@ -289,7 +389,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ? '1st change is available anytime'
                           : (daysToWait > 0
                               ? 'Next change in $daysToWait days'
-                              : 'Ready for change (30-day interval)'),
+                              : 'Ready for change (15-day interval)'),
                       style: TextStyle(
                         color: _aliasChangeCount == 0
                             ? const Color(0xFF38BDF8)
@@ -303,7 +403,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 trailing: ElevatedButton(
                   onPressed: daysToWait > 0 ? null : _regenerateAlias,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF6366F1),
+                    backgroundColor: const Color(0xFF10B981),
                     foregroundColor: Colors.white,
                     disabledBackgroundColor: const Color(0xFF262838),
                     disabledForegroundColor: Colors.white.withValues(alpha: 0.3),
@@ -317,13 +417,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   child: Text(
                     daysToWait > 0
                         ? '${daysToWait}d wait'
-                        : (_aliasChangeCount == 0 ? 'Change (Free)' : 'Regenerate'),
+                        : (_aliasChangeCount == 0 ? 'Change (Free)' : 'Rotate Now'),
                     style: const TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
+              ),
+              _buildDivider(),
+              _buildListTile(
+                title: 'Alias Rotation History',
+                subtitle: const Text(
+                  'Audit log of previous aliases (Safety record)',
+                  style: TextStyle(color: Colors.white38, fontSize: 11),
+                ),
+                trailing: const Icon(Icons.history_rounded, size: 18, color: Color(0xFF10B981)),
+                onTap: _showAliasHistoryModal,
               ),
               _buildDivider(),
               _buildListTile(

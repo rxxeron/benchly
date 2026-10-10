@@ -38,6 +38,8 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   bool _handshakeSent = false;
   bool _handshakeCompleted = false;
   bool _extensionVoted = false;
+  bool _partnerLeft = false;
+  String? _partnerLeftAlias;
 
   @override
   void initState() {
@@ -132,6 +134,27 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       if (mounted) {
         setState(() => _handshakeCompleted = true);
         _showHandshakeSuccessDialog(data['message'] ?? 'Handshake completed!');
+      }
+    });
+
+    widget.socket.on('partner_left', (data) {
+      if (mounted) {
+        final leftAlias = data?['alias'] ?? widget.partnerAlias;
+        setState(() {
+          _partnerLeft = true;
+          _partnerLeftAlias = leftAlias;
+          _timer?.cancel();
+          _partnerTyping = false;
+          _messages.add({
+            'id': 'sys_left_${DateTime.now().millisecondsSinceEpoch}',
+            'authorAlias': 'System',
+            'content': '🚪 $leftAlias has left the bench.',
+            'timestamp': DateTime.now().millisecondsSinceEpoch,
+            'isSystem': true,
+          });
+        });
+        _scrollToBottom();
+        _showPartnerLeftDialog(leftAlias);
       }
     });
 
@@ -359,7 +382,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text('Leave Conversation?', style: TextStyle(color: Colors.white, fontSize: 17)),
         content: Text(
-          'You will exit this bench session. A 30-minute cooldown will apply before entering queue again.',
+          'You will exit this bench session. A short 15-second cooldown will apply before entering queue again.',
           style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13),
         ),
         actions: [
@@ -371,9 +394,50 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
             onPressed: () {
               Navigator.pop(ctx);
               _timer?.cancel();
+              widget.socket.emit('leave_room', widget.roomId);
               Navigator.pop(context);
             },
             child: const Text('Exit Bench', style: TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showPartnerLeftDialog(String alias) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF121622),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Row(
+          children: [
+            Text('🚪', style: TextStyle(fontSize: 22)),
+            SizedBox(width: 8),
+            Text('Partner Left', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Text(
+          '$alias has left this bench session.',
+          style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 13, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Review Chat', style: TextStyle(color: Colors.white.withValues(alpha: 0.5))),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              Navigator.pop(context);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF10B981),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text('Find New Bench'),
           ),
         ],
       ),
@@ -393,6 +457,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     widget.socket.off('extension_requested_by_partner');
     widget.socket.off('partner_requested_handshake');
     widget.socket.off('handshake_completed');
+    widget.socket.off('partner_left');
     widget.socket.off('report_submitted');
     super.dispose();
   }
@@ -716,6 +781,30 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                       }
 
                       final msg = _messages[index];
+                      if (msg['isSystem'] == true) {
+                        return Center(
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(vertical: 10),
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFEF4444).withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: const Color(0xFFEF4444).withValues(alpha: 0.25),
+                              ),
+                            ),
+                            child: Text(
+                              msg['content'] ?? '',
+                              style: const TextStyle(
+                                color: Color(0xFFFCA5A5),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        );
+                      }
+
                       final isMe = msg['authorAlias'] == widget.myAlias;
                       final isPiiCensored = (msg['content'] as String).contains('[CENSORED');
 
@@ -781,8 +870,40 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                   ),
           ),
 
-          // Chat Input Bar
-          Container(
+          // Chat Input Bar or Partner Left Banner
+          if (_partnerLeft)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0E121B),
+                border: Border(top: BorderSide(color: Colors.white.withValues(alpha: 0.05))),
+              ),
+              child: SafeArea(
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                        label: Text(
+                          '${_partnerLeftAlias ?? "Partner"} Left • Find New Bench',
+                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF10B981),
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          minimumSize: const Size(double.infinity, 48),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
               color: const Color(0xFF0E121B),

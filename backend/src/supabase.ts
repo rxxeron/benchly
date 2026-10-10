@@ -25,7 +25,7 @@ export async function authenticateSocket(token: string) {
     // 2. Fetch their generated profile from the users table
     const { data: profile, error: dbError } = await supabase
         .from('users')
-        .select('id, generated_alias, gender, streak_count, dept_code, batch_year, email')
+        .select('id, generated_alias, gender, streak_count, dept_code, batch_year, email, alias_changed_at, alias_change_count, created_at')
         .eq('id', user.id)
         .single();
 
@@ -36,6 +36,12 @@ export async function authenticateSocket(token: string) {
     // Extract meta if not populated in DB
     const meta = parseEwuEmail(profile.email || user.email || '');
 
+    const lastChanged = profile.alias_changed_at 
+        ? new Date(profile.alias_changed_at) 
+        : (profile.created_at ? new Date(profile.created_at) : null);
+    const fifteenDaysMs = 15 * 24 * 60 * 60 * 1000;
+    const isRotationDue = lastChanged ? (Date.now() - lastChanged.getTime() >= fifteenDaysMs) : false;
+
     return {
         id: profile.id,
         alias: profile.generated_alias,
@@ -44,6 +50,9 @@ export async function authenticateSocket(token: string) {
         dept_code: profile.dept_code || meta.dept,
         batch_year: profile.batch_year || meta.batchYear,
         badge: meta.badge,
-        email: profile.email || user.email
+        email: profile.email || user.email,
+        alias_changed_at: profile.alias_changed_at,
+        alias_change_count: profile.alias_change_count || 0,
+        aliasRotationDue: isRotationDue
     };
 }
