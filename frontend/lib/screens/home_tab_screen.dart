@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
@@ -22,6 +23,9 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
   String _matchPref = 'anyone'; // 'male', 'female', 'anyone'
   late AnimationController _radarController;
 
+  Timer? _searchCountdownTimer;
+  int _searchCountdown = 35;
+
   @override
   void initState() {
     super.initState();
@@ -35,6 +39,7 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
 
   @override
   void dispose() {
+    _searchCountdownTimer?.cancel();
     _radarController.dispose();
     socket.dispose();
     super.dispose();
@@ -112,6 +117,7 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
     });
 
     socket.on('match_found', (data) {
+      _searchCountdownTimer?.cancel();
       if (mounted) {
         setState(() => isSearching = false);
         Navigator.push(context, MaterialPageRoute(
@@ -131,7 +137,16 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
       // Keep searching animation active
     });
 
+    socket.on('queue_timeout', (data) {
+      _searchCountdownTimer?.cancel();
+      if (mounted) {
+        setState(() => isSearching = false);
+        _showTimeoutBottomSheet(data?['message']);
+      }
+    });
+
     socket.on('error', (err) {
+      _searchCountdownTimer?.cancel();
       if (mounted) {
         setState(() => isSearching = false);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -157,14 +172,147 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
       );
       return;
     }
-    setState(() => isSearching = true);
+
+    _searchCountdownTimer?.cancel();
+    setState(() {
+      isSearching = true;
+      _searchCountdown = 35;
+    });
+
     socket.emit('join_1v1_queue', {'seeking': _matchPref});
     debugPrint('🚀 Emitted join_1v1_queue with seeking=$_matchPref');
+
+    _searchCountdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      if (_searchCountdown > 1) {
+        setState(() => _searchCountdown--);
+      } else {
+        timer.cancel();
+        _cancelSearching();
+        _showTimeoutBottomSheet();
+      }
+    });
   }
 
   void _cancelSearching() {
+    _searchCountdownTimer?.cancel();
     setState(() => isSearching = false);
     socket.emit('cancel_1v1_queue');
+  }
+
+  void _showTimeoutBottomSheet([String? customMessage]) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF10141E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 58,
+                  height: 58,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF59E0B).withValues(alpha: 0.15),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: const Color(0xFFF59E0B).withValues(alpha: 0.3),
+                      width: 1.5,
+                    ),
+                  ),
+                  child: const Center(
+                    child: Text('☕', style: TextStyle(fontSize: 26)),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'No Benches Open Right Now',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.4,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                customMessage ??
+                    'Looks like most EWU students are in class or offline right now.\nPeak Adda hours: 8:00 PM – 12:00 AM.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.6),
+                  fontSize: 13,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 24),
+              if (_matchPref != 'anyone') ...[
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _updateMatchPref('anyone');
+                    _startSearching();
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF10B981),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    minimumSize: const Size(double.infinity, 48),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.all_inclusive_rounded, size: 18),
+                      SizedBox(width: 8),
+                      Text('Match with Anyone (Higher Chance)',
+                          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
+              OutlinedButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _startSearching();
+                },
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: BorderSide(color: Colors.white.withValues(alpha: 0.15)),
+                  minimumSize: const Size(double.infinity, 48),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+                child: const Text('Try Searching Again',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+              ),
+              const SizedBox(height: 6),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(
+                  'Back to Home',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.4),
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _updateMatchPref(String pref) async {
@@ -590,17 +738,43 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
             },
           ),
           const SizedBox(height: 16),
-          const Text(
-            'Scanning the EWU benches...',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text(
+                'Scanning the EWU benches...',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF10B981).withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: const Color(0xFF10B981).withValues(alpha: 0.3),
+                  ),
+                ),
+                child: Text(
+                  '${_searchCountdown}s',
+                  style: const TextStyle(
+                    color: Color(0xFF10B981),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 6),
           Text(
-            'Looking for another student in queue (~10-20s)',
+            _searchCountdown > 15
+                ? 'Looking for another student in queue (~10-20s)'
+                : 'Benches quiet right now... checking other batches...',
             style: TextStyle(
               color: Colors.white.withValues(alpha: 0.5),
               fontSize: 12,

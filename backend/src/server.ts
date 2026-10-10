@@ -31,6 +31,7 @@ const userSocketMap = new Map<string, string>();
 const roomTimeouts = new Map<string, NodeJS.Timeout[]>();
 const roomMembers = new Map<string, { user1: string; user2: string; startTime: number; partner1Badge?: string; partner2Badge?: string }>();
 const handshakeVotes = new Map<string, Set<string>>();
+const queueTimeouts = new Map<string, NodeJS.Timeout>();
 
 const rateLimitMap = new Map<string, number>();
 setInterval(() => rateLimitMap.clear(), 1000);
@@ -145,6 +146,14 @@ io.on('connection', async (socket) => {
                     io.to(otherSocketId).emit('match_found', joinerPayload);
                 }
                 
+                // Clear queue timeouts for both matched users
+                const tCreator = queueTimeouts.get(socket.id);
+                if (tCreator) { clearTimeout(tCreator); queueTimeouts.delete(socket.id); }
+                if (otherSocketId) {
+                    const tJoiner = queueTimeouts.get(otherSocketId);
+                    if (tJoiner) { clearTimeout(tJoiner); queueTimeouts.delete(otherSocketId); }
+                }
+
                 roomMembers.set(match.roomId, { 
                     user1: user.id, 
                     user2: match.matchedUser!,
@@ -176,9 +185,22 @@ io.on('connection', async (socket) => {
                 roomTimeouts.set(match.roomId, [warningTimeout, closeTimeout]);
 
             } else {
-                // Waiting in queue
+                // Waiting in queue with 40-second server auto-timeout
                 socket.emit('waiting_in_queue');
                 socket.join(user.id); 
+
+                const existingT = queueTimeouts.get(socket.id);
+                if (existingT) clearTimeout(existingT);
+
+                const timeout = setTimeout(async () => {
+                    await removeUserFromQueues(user.id);
+                    queueTimeouts.delete(socket.id);
+                    socket.emit('queue_timeout', {
+                        message: 'No open bench found right now. Try matching with Anyone or check back during evening adda hours!'
+                    });
+                }, 40000);
+
+                queueTimeouts.set(socket.id, timeout);
             }
         } catch (error: any) {
             socket.emit('error', { message: error.message });
@@ -186,6 +208,8 @@ io.on('connection', async (socket) => {
     });
 
     socket.on('cancel_1v1_queue', async () => {
+        const t = queueTimeouts.get(socket.id);
+        if (t) { clearTimeout(t); queueTimeouts.delete(socket.id); }
         if (user && user.id) {
             await removeUserFromQueues(user.id);
         }
@@ -332,6 +356,9 @@ io.on('connection', async (socket) => {
     });
 
     socket.on('disconnect', async () => {
+        const qT = queueTimeouts.get(socket.id);
+        if (qT) { clearTimeout(qT); queueTimeouts.delete(socket.id); }
+
         await analytics.trackUserDisconnect(socket.id);
         activeUsers.delete(socket.id);
         
