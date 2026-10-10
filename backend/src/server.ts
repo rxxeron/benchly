@@ -206,14 +206,14 @@ io.on('connection', async (socket) => {
     });
 
     // 4. Mutual Handshake Feature (Exchange Contact / Handle)
-    socket.on('request_handshake', (roomId) => {
-        if (!handshakeVotes.has(roomId)) {
-            handshakeVotes.set(roomId, new Set());
-        }
-        const votes = handshakeVotes.get(roomId)!;
-        votes.add(user.id);
+    socket.on('request_handshake', async (roomId) => {
+        if (!user || !user.id) return;
+        await redis.sadd(`room_handshake:${roomId}`, user.id);
+        await redis.expire(`room_handshake:${roomId}`, 3600);
+        const votes = await redis.scard(`room_handshake:${roomId}`);
 
-        if (votes.size >= 2) {
+        if (votes >= 2) {
+            await redis.set(`room:${roomId}:handshake_agreed`, 'true', 'EX', 3600);
             io.to(roomId).emit('handshake_completed', {
                 message: 'Both students agreed to shake hands! You may now share your socials safely.'
             });
@@ -240,7 +240,7 @@ io.on('connection', async (socket) => {
     });
 
     // 6. Messaging & Strict PII Sanitization
-    socket.on('send_message', (data) => {
+    socket.on('send_message', async (data) => {
         const rateCount = rateLimitMap.get(socket.id) || 0;
         if (rateCount >= 3) return;
         rateLimitMap.set(socket.id, rateCount + 1);
@@ -248,29 +248,29 @@ io.on('connection', async (socket) => {
         const { roomId, content } = data;
         const messageId = randomUUID();
         
-        let piiFound = false;
         let safeContent = content;
 
-        // PII Detection & Analytics Tracking
-        if (/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+/gi.test(safeContent)) {
-            safeContent = safeContent.replace(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+/gi, '[CENSORED EMAIL]');
-            piiFound = true;
-            analytics.recordPiiBlocked('email', user.dept_code);
-        }
-        if (/(?:\+88)?01[3-9]\d{8}/g.test(safeContent)) {
-            safeContent = safeContent.replace(/(?:\+88)?01[3-9]\d{8}/g, '[CENSORED PHONE]');
-            piiFound = true;
-            analytics.recordPiiBlocked('phone', user.dept_code);
-        }
-        if (/https?:\/\/[^\s]+/gi.test(safeContent) || /www\.[^\s]+/gi.test(safeContent)) {
-            safeContent = safeContent.replace(/https?:\/\/[^\s]+/gi, '[CENSORED LINK]').replace(/www\.[^\s]+/gi, '[CENSORED LINK]');
-            piiFound = true;
-            analytics.recordPiiBlocked('link', user.dept_code);
-        }
-        if (/\b(?:facebook|fb|instagram|ig|snapchat|whatsapp|wa\.me|telegram|t\.me)\b/gi.test(safeContent)) {
-            safeContent = safeContent.replace(/\b(?:facebook|fb|instagram|ig|snapchat|whatsapp|wa\.me|telegram|t\.me)\b/gi, '[CENSORED SOCIAL]');
-            piiFound = true;
-            analytics.recordPiiBlocked('social', user.dept_code);
+        // Check if mutual handshake has been completed in this room
+        const isHandshakeAgreed = await redis.get(`room:${roomId}:handshake_agreed`);
+
+        if (!isHandshakeAgreed) {
+            // Apply PII Shield if handshake is NOT completed yet
+            if (/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+/gi.test(safeContent)) {
+                safeContent = safeContent.replace(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+/gi, '[CENSORED EMAIL]');
+                analytics.recordPiiBlocked('email', user.dept_code);
+            }
+            if (/(?:\+88)?01[3-9]\d{8}/g.test(safeContent)) {
+                safeContent = safeContent.replace(/(?:\+88)?01[3-9]\d{8}/g, '[CENSORED PHONE]');
+                analytics.recordPiiBlocked('phone', user.dept_code);
+            }
+            if (/https?:\/\/[^\s]+/gi.test(safeContent) || /www\.[^\s]+/gi.test(safeContent)) {
+                safeContent = safeContent.replace(/https?:\/\/[^\s]+/gi, '[CENSORED LINK]').replace(/www\.[^\s]+/gi, '[CENSORED LINK]');
+                analytics.recordPiiBlocked('link', user.dept_code);
+            }
+            if (/\b(?:facebook|fb|instagram|ig|snapchat|whatsapp|wa\.me|telegram|t\.me)\b/gi.test(safeContent)) {
+                safeContent = safeContent.replace(/\b(?:facebook|fb|instagram|ig|snapchat|whatsapp|wa\.me|telegram|t\.me)\b/gi, '[CENSORED SOCIAL]');
+                analytics.recordPiiBlocked('social', user.dept_code);
+            }
         }
 
         // Broadcast to the room (showing ONLY the alias, never the DB ID)
@@ -290,8 +290,12 @@ io.on('connection', async (socket) => {
 
     // 7. Extend Chat
     socket.on('request_extension', async (roomId) => {
-        const requests = await redis.sadd(`room_extension:${roomId}`, user.id);
-        if (requests >= 2) {
+        if (!user || !user.id) return;
+        await redis.sadd(`room_extension:${roomId}`, user.id);
+        await redis.expire(`room_extension:${roomId}`, 3600);
+        const votes = await redis.scard(`room_extension:${roomId}`);
+
+        if (votes >= 2) {
             io.to(roomId).emit('chat_extended', { minutes: 15 });
             analytics.recordEvent('chat_extended', user.dept_code, user.batch_year);
             

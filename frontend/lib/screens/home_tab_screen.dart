@@ -72,14 +72,37 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
     final session = Supabase.instance.client.auth.currentSession;
     if (session == null) return;
 
+    debugPrint('🔌 [Socket] Connecting to ${AppConfig.socketUrl} with token: ${session.accessToken.substring(0, 15)}...');
+
     socket = io.io(AppConfig.socketUrl, io.OptionBuilder()
-        .setTransports(['websocket'])
+        .setTransports(['websocket', 'polling'])
+        .enableAutoConnect()
+        .enableReconnection()
         .setAuth({'token': session.accessToken})
         .build());
 
-    socket.onConnect((_) {});
+    socket.onConnect((_) {
+      debugPrint('🟢 [Socket] Connected! socket.id=${socket.id}');
+    });
+
+    socket.onConnectError((err) {
+      debugPrint('🔴 [Socket] Connect Error: $err');
+    });
+
+    socket.on('connect_timeout', (data) {
+      debugPrint('⏰ [Socket] Connect Timeout: $data');
+    });
+
+    socket.onError((err) {
+      debugPrint('🔴 [Socket] Error: $err');
+    });
+
+    socket.onDisconnect((reason) {
+      debugPrint('⚠️ [Socket] Disconnected: $reason');
+    });
 
     socket.on('authenticated', (data) {
+      debugPrint('🎉 [Socket] Authenticated: $data');
       if (mounted) {
         setState(() {
           currentAlias ??= data['alias'];
@@ -122,8 +145,21 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
   }
 
   void _startSearching() {
+    debugPrint('🔍 [_startSearching] socket.connected=${socket.connected}, id=${socket.id}, seeking=$_matchPref');
+    if (!socket.connected) {
+      debugPrint('⚠️ Socket not connected, calling socket.connect()...');
+      socket.connect();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Connecting to Benchly server... please try again in a moment.'),
+          backgroundColor: Color(0xFFF59E0B),
+        ),
+      );
+      return;
+    }
     setState(() => isSearching = true);
     socket.emit('join_1v1_queue', {'seeking': _matchPref});
+    debugPrint('🚀 Emitted join_1v1_queue with seeking=$_matchPref');
   }
 
   void _cancelSearching() {

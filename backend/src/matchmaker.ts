@@ -122,6 +122,7 @@ export async function removeUserFromQueues(userId: string) {
 }
 
 export async function applyCooldown(userId: string) {
-    // Apply a 30-minute cooldown (1800 seconds)
-    await redis.set(`cooldown:${userId}`, 'active', 'EX', 1800);
+    // 15-second cooldown for smooth testing (configurable via env)
+    const cooldownSec = parseInt(process.env.COOLDOWN_SECONDS || '15', 10);
+    await redis.set(`cooldown:${userId}`, 'active', 'EX', cooldownSec);
 }
