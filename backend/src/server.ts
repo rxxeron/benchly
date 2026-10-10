@@ -172,6 +172,12 @@ app.get('/api/student/analytics', async (req, res) => {
     }
 });
 
+// Short URL Bench Invite Redirect (e.g. benchly.live/b/a9x7k2)
+app.get('/b/:code', (req, res) => {
+    const code = req.params.code;
+    res.redirect(`https://benchly.live/?invite=${encodeURIComponent(code)}`);
+});
+
 // ==========================================
 // WebSocket Real-Time Gateway
 // ==========================================
@@ -223,6 +229,130 @@ io.on('connection', async (socket) => {
         } catch (e: any) {
             if (callback) callback({ success: false, error: e.message });
             socket.emit('alias_error', { message: e.message });
+        }
+    });
+
+    // 1.8 Create Direct Bench Short URL Invite
+    socket.on('create_invite_bench', async (_, callback) => {
+        try {
+            const code = Math.random().toString(36).substring(2, 8);
+            const roomId = `invite_room_${code}`;
+
+            const inviteData = {
+                roomId,
+                code,
+                creatorId: user.id,
+                creatorAlias: user.alias || 'Anonymous Student',
+                creatorBadge: user.badge || 'EWU Student',
+                createdAt: Date.now()
+            };
+
+            await redis.set(`bench_invite:${code}`, JSON.stringify(inviteData), 'EX', 1800);
+            socket.join(roomId);
+
+            // Record initial attribution in Supabase
+            await supabase.from('referrals').insert({
+                inviter_id: user.id,
+                short_code: code,
+                status: 'created'
+            });
+
+            const inviteUrl = `https://benchly.live/b/${code}`;
+            if (callback) callback({ success: true, code, inviteUrl, roomId });
+            socket.emit('invite_bench_created', { code, inviteUrl, roomId });
+        } catch (e: any) {
+            if (callback) callback({ success: false, error: e.message });
+        }
+    });
+
+    // 1.9 Join Direct Bench Invite (Friend clicks short URL)
+    socket.on('join_invite_bench', async (data, callback) => {
+        try {
+            const code = (data?.code || '').trim().toLowerCase();
+            if (!code) throw new Error('Invite code required');
+
+            const raw = await redis.get(`bench_invite:${code}`);
+            if (!raw) {
+                socket.emit('invite_error', { message: 'This bench invite has expired or already ended.' });
+                if (callback) callback({ success: false, message: 'Invite expired or invalid' });
+                return;
+            }
+
+            const invite = JSON.parse(raw);
+            if (invite.creatorId === user.id) {
+                socket.emit('invite_error', { message: 'You cannot join your own bench invite.' });
+                if (callback) callback({ success: false, message: 'Cannot join own bench' });
+                return;
+            }
+
+            // Remove from Redis to make it single-use
+            await redis.del(`bench_invite:${code}`);
+
+            // Join room
+            socket.join(invite.roomId);
+
+            // Record referral attribution & reward stones (+5 stones)
+            await supabase.rpc('record_referral_join', {
+                p_short_code: code,
+                p_invitee_id: user.id
+            });
+
+            const icebreaker = getRandomIcebreaker();
+
+            // Dispatch to creator
+            io.to(invite.creatorId).emit('match_found', {
+                roomId: invite.roomId,
+                role: 'creator',
+                icebreaker,
+                partnerAlias: user.alias || 'Anonymous Student',
+                partnerBadge: user.badge || 'EWU Student',
+                isDirectInvite: true
+            });
+
+            // Dispatch to joiner
+            socket.emit('match_found', {
+                roomId: invite.roomId,
+                role: 'joiner',
+                icebreaker,
+                partnerAlias: invite.creatorAlias || 'Anonymous Student',
+                partnerBadge: invite.creatorBadge || 'EWU Student',
+                isDirectInvite: true
+            });
+
+            roomMembers.set(invite.roomId, {
+                user1: invite.creatorId,
+                user2: user.id,
+                user1Alias: invite.creatorAlias,
+                user2Alias: user.alias,
+                startTime: Date.now(),
+                user1Messages: 0,
+                user2Messages: 0
+            });
+
+            analytics.recordEvent('match_created', user.dept_code, user.batch_year, 0, { type: 'invite' });
+
+            // 15-minute timers
+            const warningTimeout = setTimeout(() => {
+                io.to(invite.roomId).emit('chat_ending_soon');
+            }, CHAT_WARNING_MS);
+
+            const closeTimeout = setTimeout(async () => {
+                io.to(invite.roomId).emit('chat_closed');
+                io.in(invite.roomId).socketsLeave(invite.roomId);
+                await saveRoomSession(invite.roomId);
+                applyCooldown(invite.creatorId);
+                applyCooldown(user.id);
+                roomTimeouts.delete(invite.roomId);
+                roomMembers.delete(invite.roomId);
+                handshakeVotes.delete(invite.roomId);
+            }, CHAT_DURATION_MS);
+
+            roomTimeouts.set(invite.roomId, [warningTimeout, closeTimeout]);
+
+            if (callback) callback({ success: true, roomId: invite.roomId });
+        } catch (e: any) {
+            socket.emit('invite_error', { message: e.message });
+            if (callback) callback({ success: false, error: e.message });
         }
     });
 

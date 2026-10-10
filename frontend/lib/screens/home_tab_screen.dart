@@ -1,10 +1,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 import '../config/app_config.dart';
 import 'chat_room_screen.dart';
-import 'admin_analytics_screen.dart';
 
 class HomeTabScreen extends StatefulWidget {
   const HomeTabScreen({super.key});
@@ -26,6 +27,7 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
   Timer? _searchCountdownTimer;
   int _searchCountdown = 35;
   bool _rotationPromptShown = false;
+  bool _urlInviteChecked = false;
 
   @override
   void initState() {
@@ -120,6 +122,8 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
             _promptAliasRotation();
           });
         }
+
+        _checkUrlInvite();
       }
     });
 
@@ -132,6 +136,35 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
           SnackBar(
             content: Text('Your alias was updated to: ${data['newAlias']}'),
             backgroundColor: const Color(0xFF10B981),
+          ),
+        );
+      }
+    });
+
+    socket.on('invite_error', (data) {
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: const Color(0xFF121622),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+            title: const Row(
+              children: [
+                Icon(Icons.info_outline_rounded, color: Color(0xFFEF4444), size: 20),
+                SizedBox(width: 8),
+                Text('Bench Invite', style: TextStyle(color: Colors.white, fontSize: 16)),
+              ],
+            ),
+            content: Text(
+              data?['message'] ?? 'This bench invite has expired or already ended.',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 13),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('OK', style: TextStyle(color: Color(0xFF10B981))),
+              ),
+            ],
           ),
         );
       }
@@ -415,6 +448,390 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
     );
   }
 
+  void _checkUrlInvite() {
+    if (_urlInviteChecked) return;
+    _urlInviteChecked = true;
+
+    try {
+      final inviteParam = Uri.base.queryParameters['invite'];
+      if (inviteParam != null && inviteParam.trim().isNotEmpty) {
+        final code = inviteParam.trim().toLowerCase();
+        debugPrint('🔗 [Invite] Found URL invite query parameter: $code');
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _promptJoinInviteBench(code);
+        });
+      }
+    } catch (e) {
+      debugPrint('⚠️ [Invite] Error checking invite param: $e');
+    }
+  }
+
+  void _promptJoinInviteBench(String code) {
+    if (!mounted) return;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF10141E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 26),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 58,
+                  height: 58,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF10B981).withValues(alpha: 0.15),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: const Color(0xFF10B981).withValues(alpha: 0.3),
+                      width: 1.5,
+                    ),
+                  ),
+                  child: const Center(
+                    child: Icon(Icons.chair_rounded, color: Color(0xFF10B981), size: 28),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Private Bench Invitation',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.4,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'You were invited to sit on a private East West University bench (Code: ${code.toUpperCase()}).\nBoth of you will earn +5 Stones!',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.7),
+                  fontSize: 13,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 22),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _joinInviteBench(code);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF10B981),
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(double.infinity, 50),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.login_rounded, size: 18),
+                    SizedBox(width: 8),
+                    Text('Join Bench Now', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(
+                  'Decline / Back',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _joinInviteBench(String code) {
+    if (!socket.connected) {
+      socket.connect();
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Joining private bench ${code.toUpperCase()}...'),
+        backgroundColor: const Color(0xFF10B981),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+    socket.emit('join_invite_bench', {'code': code});
+  }
+
+  void _showInviteFriendModal() {
+    if (!socket.connected) {
+      socket.connect();
+    }
+
+    String? generatedCode;
+    String? generatedUrl;
+    bool isGenerating = true;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF10141E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (modalCtx, setModalState) {
+            if (isGenerating && generatedCode == null) {
+              void onCreated(dynamic data) {
+                if (modalCtx.mounted) {
+                  setModalState(() {
+                    generatedCode = data['code'];
+                    generatedUrl = data['inviteUrl'] ?? 'https://benchly.live/b/${data['code']}';
+                    isGenerating = false;
+                  });
+                }
+              }
+
+              socket.once('invite_bench_created', onCreated);
+              socket.emit('create_invite_bench');
+            }
+
+            final url = generatedUrl ?? (generatedCode != null ? 'https://benchly.live/b/$generatedCode' : '');
+
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFF6366F1), Color(0xFF10B981)],
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(Icons.share_rounded, color: Colors.white, size: 22),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Invite a Friend to Bench',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: -0.3,
+                                ),
+                              ),
+                              SizedBox(height: 2),
+                              Text(
+                                'Bring a friend for a 15-min adda • Earn +5 Stones',
+                                style: TextStyle(
+                                  color: Color(0xFF10B981),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+
+                    if (isGenerating)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 36),
+                        child: Column(
+                          children: [
+                            CircularProgressIndicator(color: Color(0xFF10B981), strokeWidth: 2.5),
+                            SizedBox(height: 14),
+                            Text(
+                              'Generating your private short link...',
+                              style: TextStyle(color: Colors.white70, fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      )
+                    else ...[
+                      // Link Display Box
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF141824),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: const Color(0xFF6366F1).withValues(alpha: 0.3)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.link_rounded, color: Color(0xFF818CF8), size: 18),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                url,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Copy Link',
+                              icon: const Icon(Icons.copy_rounded, color: Color(0xFF10B981), size: 18),
+                              onPressed: () {
+                                Clipboard.setData(ClipboardData(text: url));
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Short link copied! Share with your friend.'),
+                                    backgroundColor: Color(0xFF10B981),
+                                    duration: Duration(seconds: 2),
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+
+                      // Action Buttons
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: () {
+                                Clipboard.setData(ClipboardData(text: url));
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Invite link copied to clipboard!'),
+                                    backgroundColor: Color(0xFF10B981),
+                                  ),
+                                );
+                              },
+                              icon: const Icon(Icons.copy_rounded, size: 16),
+                              label: const Text('Copy Link'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF141824),
+                                foregroundColor: Colors.white,
+                                elevation: 0,
+                                minimumSize: const Size(0, 46),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  side: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: () async {
+                                final text = Uri.encodeComponent(
+                                  'Hey! Sit with me on Benchly for an adda: $url',
+                                );
+                                final waUri = Uri.parse('https://wa.me/?text=$text');
+                                if (await canLaunchUrl(waUri)) {
+                                  await launchUrl(waUri, mode: LaunchMode.externalApplication);
+                                } else {
+                                  Clipboard.setData(ClipboardData(text: url));
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Link copied! Paste into WhatsApp or Messenger.'),
+                                        backgroundColor: Color(0xFF10B981),
+                                      ),
+                                    );
+                                  }
+                                }
+                              },
+                              icon: const Text('💬', style: TextStyle(fontSize: 16)),
+                              label: const Text('WhatsApp'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF25D366),
+                                foregroundColor: Colors.white,
+                                elevation: 0,
+                                minimumSize: const Size(0, 46),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 18),
+
+                      // Waiting Pulse Note
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF121622),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: const BoxDecoration(
+                                color: Color(0xFF10B981),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                'Bench is waiting for your friend to open the link. Once they join, this screen will automatically open the chat!',
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.65),
+                                  fontSize: 11,
+                                  height: 1.35,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 10),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isMale = (userGender ?? 'male').toLowerCase() == 'male';
@@ -474,18 +891,6 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
                 ),
               ],
             ),
-          ),
-
-          // Shortcut to Admin Analytics Dashboard
-          IconButton(
-            tooltip: 'Campus Analytics',
-            icon: const Icon(Icons.insights_rounded, color: Color(0xFF10B981), size: 20),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const AdminAnalyticsScreen()),
-              );
-            },
           ),
           const SizedBox(width: 4),
         ],
@@ -693,6 +1098,91 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
                   ],
                 ),
               ),
+
+            const SizedBox(height: 14),
+
+            // Invite Friend Direct Bench Card
+            Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    const Color(0xFF6366F1).withValues(alpha: 0.15),
+                    const Color(0xFF10B981).withValues(alpha: 0.12),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFF6366F1).withValues(alpha: 0.3)),
+              ),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: _showInviteFriendModal,
+                  borderRadius: BorderRadius.circular(16),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF6366F1).withValues(alpha: 0.25),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(Icons.share_rounded, color: Color(0xFF818CF8), size: 20),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Text(
+                                    'Invite a Friend to Bench',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFF59E0B).withValues(alpha: 0.2),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: const Text(
+                                      '+5 💎',
+                                      style: TextStyle(
+                                        color: Color(0xFFF59E0B),
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 10,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                'Share a short link to WhatsApp/Messenger. Connect instantly on a private bench!',
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.6),
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Colors.white.withValues(alpha: 0.4)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
 
             const SizedBox(height: 14),
 

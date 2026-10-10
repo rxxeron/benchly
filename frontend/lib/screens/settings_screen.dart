@@ -3,7 +3,6 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/app_config.dart';
-import 'admin_analytics_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -530,20 +529,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 title: 'Delete Account',
                 textColor: const Color(0xFFEF4444),
                 onTap: _deleteAccount,
-              ),
-            ]),
-
-            _buildSectionHeader('CAMPUS INTELLIGENCE'),
-            _buildGroup([
-              _buildListTile(
-                title: 'Campus Analytics Dashboard',
-                trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Color(0xFF10B981)),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const AdminAnalyticsScreen()),
-                  );
-                },
               ),
             ]),
 

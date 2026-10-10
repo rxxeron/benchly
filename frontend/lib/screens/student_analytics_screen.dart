@@ -33,6 +33,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
   int _userStreak = 0;
   String? _userDept;
   String? _userBatch;
+  int _totalReferrals = 0;
 
   @override
   void initState() {
@@ -72,7 +73,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
     try {
       final data = await Supabase.instance.client
           .from('users')
-          .select('generated_alias, streak_count, dept_code, batch_year')
+          .select('generated_alias, streak_count, dept_code, batch_year, total_referrals')
           .eq('id', user.id)
           .maybeSingle();
 
@@ -82,6 +83,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
           _userStreak = data['streak_count'] ?? 0;
           _userDept = data['dept_code'];
           _userBatch = data['batch_year'];
+          _totalReferrals = data['total_referrals'] ?? 0;
         });
       }
     } catch (_) {}
@@ -258,6 +260,10 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
 
               // Engagement KPI Grid
               _buildMetricGrid(),
+              const SizedBox(height: 18),
+
+              // Friends Brought / Referral Impact Card
+              _buildReferralImpactCard(),
               const SizedBox(height: 18),
 
               // Sent vs Received Balance Breakdown
@@ -645,6 +651,129 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                 ],
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReferralImpactCard() {
+    final earnedStones = _totalReferrals * 5;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            const Color(0xFF6366F1).withValues(alpha: 0.14),
+            const Color(0xFF10B981).withValues(alpha: 0.10),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFF6366F1).withValues(alpha: 0.28)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF6366F1).withValues(alpha: 0.25),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.group_add_rounded, color: Color(0xFF818CF8), size: 18),
+                  ),
+                  const SizedBox(width: 10),
+                  const Text(
+                    'Friends Brought to Benchly',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF10B981).withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text(
+                  '+5 💎 / Friend',
+                  style: TextStyle(color: Color(0xFF10B981), fontSize: 10, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF121622),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Friends Invited',
+                        style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.5)),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '$_totalReferrals',
+                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF121622),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Stones Rewarded',
+                        style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.5)),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '+$earnedStones 💎',
+                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Color(0xFFF59E0B)),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Share your bench short links on Messenger or WhatsApp. Every EWU student you bring to the benches earns you +5 Stones.',
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.white.withValues(alpha: 0.55),
+              height: 1.35,
+            ),
           ),
         ],
       ),
