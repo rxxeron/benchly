@@ -2,7 +2,9 @@
 > **The Anonymous Real-Time Matchmaking Platform for East West University (EWU) Students**  
 > *"No names. No profiles. Just campus talk."*  
 > **Repository:** [https://github.com/rxxeron/benchly](https://github.com/rxxeron/benchly)  
-> **Production Server:** Azure Linux VM (`20.198.226.66:3001`)  
+> **Production Server:** `https://benchly.live` (API: `https://api.benchly.live`)  
+> **Host IP:** Azure Linux VM (`20.198.226.66`)  
+> **SSL & Reverse Proxy:** Caddy v2 (Let's Encrypt TLS 1.3 / HTTP/3)  
 > **Last Updated:** October 2026
 
 ---
