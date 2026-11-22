@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -212,7 +213,9 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
     final session = Supabase.instance.client.auth.currentSession;
     if (session == null) return;
 
-    debugPrint('🔌 [Socket] Connecting to ${AppConfig.socketUrl} with token: ${session.accessToken.substring(0, 15)}...');
+    if (kDebugMode) {
+      debugPrint('🔌 [Socket] Connecting to ${AppConfig.socketUrl}');
+    }
 
     socket = io.io(AppConfig.socketUrl, io.OptionBuilder()
         .setTransports(['websocket', 'polling'])
@@ -222,26 +225,26 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
         .build());
 
     socket.onConnect((_) {
-      debugPrint('🟢 [Socket] Connected! socket.id=${socket.id}');
+      if (kDebugMode) debugPrint('🟢 [Socket] Connected');
       if (mounted) setState(() => _socketConnected = true);
     });
 
     socket.onConnectError((err) {
-      debugPrint('🔴 [Socket] Connect Error: $err');
+      if (kDebugMode) debugPrint('🔴 [Socket] Connect Error: $err');
       if (mounted) setState(() => _socketConnected = false);
     });
 
     socket.on('connect_timeout', (data) {
-      debugPrint('⏰ [Socket] Connect Timeout: $data');
+      if (kDebugMode) debugPrint('⏰ [Socket] Connect Timeout');
       if (mounted) setState(() => _socketConnected = false);
     });
 
     socket.onError((err) {
-      debugPrint('🔴 [Socket] Error: $err');
+      if (kDebugMode) debugPrint('🔴 [Socket] Error: $err');
     });
 
     socket.onDisconnect((reason) {
-      debugPrint('⚠️ [Socket] Disconnected: $reason');
+      if (kDebugMode) debugPrint('⚠️ [Socket] Disconnected: $reason');
       if (mounted) setState(() => _socketConnected = false);
       final freshToken = Supabase.instance.client.auth.currentSession?.accessToken;
       if (freshToken != null) {
@@ -257,7 +260,7 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
     });
 
     socket.on('authenticated', (data) {
-      debugPrint('🎉 [Socket] Authenticated: $data');
+      if (kDebugMode) debugPrint('🎉 [Socket] Authenticated');
       if (mounted) {
         setState(() {
           currentAlias = data['alias'] ?? currentAlias;
