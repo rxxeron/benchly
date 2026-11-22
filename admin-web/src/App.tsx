@@ -23,10 +23,9 @@ export default function App() {
   const [loading, setLoading] = useState(false);
 
   // Login form state (empty by default, no prefilled email/password)
+  const [showPasswordLogin, setShowPasswordLogin] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [adminSecret, setAdminSecret] = useState('');
-  const [loginMsg, setLoginMsg] = useState('');
 
   // Post-login "Set Password" prompt state (for Google / Magic Link logins with no password yet)
   const [needsPasswordSetup, setNeedsPasswordSetup] = useState(false);
@@ -146,9 +145,8 @@ export default function App() {
   async function handleSupabasePasswordLogin(e: React.FormEvent) {
     e.preventDefault();
     setError('');
-    setLoginMsg('');
     if (!supabase) {
-      setError('Supabase env vars not configured. Use Admin Secret login below or set VITE_SUPABASE_URL.');
+      setError('Supabase environment variables are not configured.');
       return;
     }
     const { data, error: authErr } = await supabase.auth.signInWithPassword({ email, password });
@@ -164,9 +162,8 @@ export default function App() {
 
   async function handleGoogleLogin() {
     setError('');
-    setLoginMsg('');
     if (!supabase) {
-      setError('Configure VITE_SUPABASE_URL & VITE_SUPABASE_ANON_KEY in admin-web/.env first.');
+      setError('Supabase environment variables are not configured.');
       return;
     }
     const { error: oauthErr } = await supabase.auth.signInWithOAuth({
@@ -201,30 +198,6 @@ export default function App() {
     }
   }
 
-  async function handleMagicLink() {
-    setError('');
-    setLoginMsg('');
-    if (!supabase) {
-      setError('Configure VITE_SUPABASE_URL & VITE_SUPABASE_ANON_KEY in admin-web/.env first.');
-      return;
-    }
-    const { error: otpErr } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: window.location.origin }
-    });
-    if (otpErr) setError(otpErr.message);
-    else setLoginMsg(`Magic login link sent to ${email}`);
-  }
-
-  function handleSecretLogin(e: React.FormEvent) {
-    e.preventDefault();
-    if (!adminSecret.trim()) {
-      setError('Enter your ADMIN_SECRET from backend/.env');
-      return;
-    }
-    setAuth({ adminSecret: adminSecret.trim(), email: 'rhrakibulhasan279@gmail.com' });
-  }
-
   async function handleSignOut() {
     if (supabase) await supabase.auth.signOut();
     setAuth(null);
@@ -239,81 +212,85 @@ export default function App() {
             <div className="brand-dot" />
             <h2 style={{ margin: 0, fontSize: 20 }}>Benchly Admin Console</h2>
           </div>
-          <p style={{ color: '#575049', fontSize: 13, marginTop: 0 }}>
+          <p style={{ color: '#575049', fontSize: 13, marginTop: 0, marginBottom: 18 }}>
             Authorized Benchly administrators only.
           </p>
 
-          {error && <div className="badge rose" style={{ marginBottom: 12, width: '100%' }}>{error}</div>}
-          {loginMsg && <div className="badge emerald" style={{ marginBottom: 12, width: '100%' }}>{loginMsg}</div>}
+          {error && <div className="badge rose" style={{ marginBottom: 14, width: '100%' }}>{error}</div>}
 
-          <button
-            className="btn"
-            type="button"
-            onClick={handleGoogleLogin}
-            style={{
-              width: '100%',
-              marginBottom: 14,
-              padding: '10px 14px',
-              background: '#ffffff',
-              color: '#111827',
-              fontWeight: 700,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8
-            }}
-          >
-            Continue with Google
-          </button>
-
-          <form
-            onSubmit={handleSupabasePasswordLogin}
-            autoComplete="off"
-            style={{ display: 'grid', gap: 10, marginBottom: 16 }}
-          >
-            <input
-              className="input"
-              type="email"
-              name="admin_email"
-              autoComplete="off"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="Admin email"
-            />
-            <input
-              className="input"
-              type="password"
-              name="admin_password"
-              autoComplete="new-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Password (leave blank for Magic Link)"
-            />
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn primary" type="submit" style={{ flex: 1 }}>
-                Sign In
+          {!showPasswordLogin ? (
+            <div style={{ display: 'grid', gap: 12 }}>
+              <button
+                className="btn primary"
+                type="button"
+                onClick={handleGoogleLogin}
+                style={{
+                  width: '100%',
+                  padding: '12px 16px',
+                  fontSize: 15,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8
+                }}
+              >
+                Sign in with Google
               </button>
-              <button className="btn" type="button" onClick={handleMagicLink}>
-                Magic Link
+
+              <button
+                className="btn"
+                type="button"
+                onClick={() => {
+                  setError('');
+                  setShowPasswordLogin(true);
+                }}
+                style={{ width: '100%', padding: '10px 14px' }}
+              >
+                Login with Email &amp; Password
               </button>
             </div>
-          </form>
-
-          <div style={{ borderTop: '1px solid rgba(30,27,24,0.12)', paddingTop: 14 }}>
-            <div className="stat-label" style={{ marginBottom: 8 }}>Or Connect via Backend ADMIN_SECRET</div>
-            <form onSubmit={handleSecretLogin} autoComplete="off" style={{ display: 'flex', gap: 8 }}>
+          ) : (
+            <form
+              onSubmit={handleSupabasePasswordLogin}
+              autoComplete="off"
+              style={{ display: 'grid', gap: 10 }}
+            >
+              <input
+                className="input"
+                type="email"
+                name="admin_email"
+                autoComplete="off"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Admin email"
+              />
               <input
                 className="input"
                 type="password"
-                name="admin_secret"
+                name="admin_password"
                 autoComplete="new-password"
-                value={adminSecret}
-                onChange={(e) => setAdminSecret(e.target.value)}
-                placeholder="x-admin-secret"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Password"
               />
-              <button className="btn" type="submit">Enter</button>
+              <button className="btn primary" type="submit" style={{ width: '100%', padding: '11px 14px' }}>
+                Sign In
+              </button>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => {
+                  setError('');
+                  setShowPasswordLogin(false);
+                }}
+                style={{ width: '100%' }}
+              >
+                ← Back to Google Sign-In
+              </button>
             </form>
-          </div>
+          )}
         </div>
       </div>
     );
