@@ -38,8 +38,9 @@ h1, h2, h3, h4 {
 
 .layout {
   display: grid;
-  grid-template-columns: 256px 1fr;
+  grid-template-columns: 256px minmax(0, 1fr);
   min-height: 100vh;
+  max-width: 100vw;
 }
 
 .sidebar {
@@ -101,6 +102,8 @@ h1, h2, h3, h4 {
 
 .main {
   padding: 26px 30px;
+  min-width: 0;
+  max-width: 100%;
   overflow-x: hidden;
 }
 
@@ -109,12 +112,14 @@ h1, h2, h3, h4 {
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 14px;
   margin-bottom: 20px;
+  min-width: 0;
 }
 
 .grid-2 {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
   gap: 16px;
+  min-width: 0;
 }
 
 .card {
@@ -123,6 +128,9 @@ h1, h2, h3, h4 {
   border-radius: 18px;
   padding: 18px 20px;
   box-shadow: 4px 4px 0 var(--border);
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .card h3 {

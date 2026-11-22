@@ -24,7 +24,7 @@ export function RoomsTab({ rooms, selectedRoom, onInspectRoom }: RoomsTabProps) 
   });
 
   return (
-    <div style={{ display: 'grid', gap: 16 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 16, minWidth: 0 }}>
       <div className="card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
           <h3 style={{ margin: 0 }}>Archived Rooms ({rooms.length})</h3>

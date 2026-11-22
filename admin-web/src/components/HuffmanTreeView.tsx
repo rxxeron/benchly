@@ -148,9 +148,12 @@ export const HuffmanTreeView: React.FC<{ tree: VisualHuffmanTreeNode | null }> =
 
       <div
         style={{
+          width: '100%',
+          maxWidth: '100%',
+          minWidth: 0,
           overflowX: isFit ? 'hidden' : 'auto',
           overflowY: isFit ? 'hidden' : 'auto',
-          maxHeight: isFit ? 'none' : 540,
+          maxHeight: isFit ? 520 : 540,
           background: '#fffdf8',
           border: '2px solid #1e1b18',
           borderRadius: 14,
@@ -159,10 +162,21 @@ export const HuffmanTreeView: React.FC<{ tree: VisualHuffmanTreeNode | null }> =
       >
         <svg
           viewBox={`0 0 ${layout.width} ${layout.height}`}
-          width={isFit ? '100%' : Math.round(layout.width * zoomFactor)}
-          height={isFit ? Math.min(520, Math.max(300, Math.round(layout.height * 0.82))) : Math.round(layout.height * zoomFactor)}
           preserveAspectRatio="xMidYMid meet"
-          style={{ display: 'block', margin: '0 auto' }}
+          style={
+            isFit
+              ? {
+                  display: 'block',
+                  width: '100%',
+                  maxWidth: '100%',
+                  height: Math.min(480, Math.max(300, Math.round(layout.height * 0.8)))
+                }
+              : {
+                  display: 'block',
+                  width: `${Math.round(layout.width * zoomFactor)}px`,
+                  height: `${Math.round(layout.height * zoomFactor)}px`
+                }
+          }
         >
           {/* Edges */}
           {layout.nodes.map((p) => {
