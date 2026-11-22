@@ -17,6 +17,25 @@ export class InMemoryRedisAdapter {
         return this;
     }
 
+    async ping(): Promise<'PONG'> {
+        return 'PONG';
+    }
+
+    async sismember(key: string, member: string): Promise<number> {
+        const s = this.sets.get(key);
+        return s && s.has(member) ? 1 : 0;
+    }
+
+    async hdel(key: string, ...fields: string[]): Promise<number> {
+        const h = this.hashes.get(key);
+        if (!h) return 0;
+        let removed = 0;
+        for (const f of fields) {
+            if (h.delete(f)) removed++;
+        }
+        return removed;
+    }
+
     async get(key: string): Promise<string | null> {
         const entry = this.kv.get(key);
         if (!entry) return null;

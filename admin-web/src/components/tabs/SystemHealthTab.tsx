@@ -43,7 +43,9 @@ export function SystemHealthTab({ systemHealth }: { systemHealth: any }) {
                 <td>Redis Status</td>
                 <td>
                   <span className={`badge ${systemHealth.redis?.ok ? 'emerald' : 'rose'}`}>
-                    {systemHealth.redis?.ok ? 'Connected' : 'Down'}
+                    {systemHealth.redis?.ok
+                      ? `Connected (${systemHealth.redis?.mode || 'In-Memory Valkey'})`
+                      : 'Down'}
                   </span>
                 </td>
               </tr>

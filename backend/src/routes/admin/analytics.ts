@@ -68,8 +68,13 @@ export function registerAdminAnalyticsRoutes(
             const redisStart = Date.now();
             let redisOk = true;
             let redisPingMs = 0;
+            const redisMode = process.env.REDIS_URL ? 'External Redis' : 'In-Memory Valkey';
             try {
-                await redis.ping();
+                if (typeof redis.ping === 'function') {
+                    await redis.ping();
+                } else {
+                    await redis.get('__health_check__');
+                }
                 redisPingMs = Date.now() - redisStart;
             } catch {
                 redisOk = false;
@@ -143,7 +148,7 @@ export function registerAdminAnalyticsRoutes(
                     nodeVersion: process.version,
                     platform: process.platform
                 },
-                redis: { ok: redisOk, pingMs: redisPingMs },
+                redis: { ok: redisOk, pingMs: redisPingMs, mode: redisMode },
                 ollamaCluster,
                 supabase: {
                     counts: {
