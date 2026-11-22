@@ -5,28 +5,120 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0FB881">
   <meta name="description" content="Benchly — Anonymous 1-on-1 & 5-Student Cafeteria Adda for East West University">
   <meta name="google-signin-client_id" content="889213303361-cd3enuu36e1gbpcvppkclf8nhjno4lqe.apps.googleusercontent.com">
 
-  <!-- iOS meta tags & icons -->
+  <!-- iOS & Android PWA meta tags -->
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Benchly">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
-  <!-- Favicon -->
+  <!-- Favicon & Manifest -->
   <link rel="icon" type="image/png" href="favicon.png"/>
-
   <title>Benchly — EWU Campus Adda</title>
   <link rel="manifest" href="manifest.json">
 </head>
-<body>
+<body style="background-color:#FFF9F0;margin:0;">
   <script>
+    window.__benchlyDeferredPwaPrompt = null;
+    window.addEventListener('beforeinstallprompt', function (e) {
+      e.preventDefault();
+      window.__benchlyDeferredPwaPrompt = e;
+    });
+
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.getRegistrations().then(function (regs) {
-        for (var i = 0; i < regs.length; i++) regs[i].unregister();
+        for (var i = 0; i < regs.length; i++) {
+          var url = (regs[i].active && regs[i].active.scriptURL) || '';
+          if (url.indexOf('flutter_service_worker.js') !== -1) {
+            regs[i].unregister();
+          }
+        }
+        navigator.serviceWorker.register('/benchly-sw.js').catch(function () {});
       });
     }
+
+    window.benchlyPlayChime = function () {
+      try {
+        var Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        var ctx = new Ctx();
+        var now = ctx.currentTime;
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(587.33, now);
+        osc.frequency.setValueAtTime(880.0, now + 0.09);
+        gain.gain.setValueAtTime(0.08, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.29);
+      } catch (_) {}
+    };
+
+    window.benchlyNotify = function (title, body, tag) {
+      try {
+        window.benchlyPlayChime();
+        if (!('Notification' in window)) return;
+        if (Notification.permission !== 'granted') return;
+        var opts = {
+          body: String(body || ''),
+          icon: 'icons/Icon-192.png',
+          badge: 'icons/Icon-192.png',
+          tag: String(tag || 'benchly'),
+          renotify: true
+        };
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.getRegistration('/benchly-sw.js').then(function (reg) {
+            if (reg && reg.showNotification) {
+              reg.showNotification(String(title || 'Benchly'), opts);
+            } else {
+              new Notification(String(title || 'Benchly'), opts);
+            }
+          }).catch(function () {
+            new Notification(String(title || 'Benchly'), opts);
+          });
+        } else {
+          new Notification(String(title || 'Benchly'), opts);
+        }
+      } catch (_) {}
+    };
+
+    window.benchlyEnableNotifications = async function () {
+      try {
+        window.benchlyPlayChime();
+        if (!('Notification' in window)) return 'unsupported';
+        var perm = Notification.permission;
+        if (perm !== 'granted') {
+          perm = await Notification.requestPermission();
+        }
+        if (perm === 'granted') {
+          window.benchlyNotify('🔔 Benchly Alerts Enabled!', 'You will be notified when a match is found or a classmate messages you.', 'welcome');
+        }
+        return perm;
+      } catch (_) {
+        return 'error';
+      }
+    };
+
+    window.benchlyInstallPwa = async function () {
+      try {
+        var promptEvent = window.__benchlyDeferredPwaPrompt;
+        if (!promptEvent) return 'unavailable';
+        promptEvent.prompt();
+        var choice = await promptEvent.userChoice;
+        window.__benchlyDeferredPwaPrompt = null;
+        return (choice && choice.outcome) || 'prompted';
+      } catch (_) {
+        return 'unavailable';
+      }
+    };
   </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>

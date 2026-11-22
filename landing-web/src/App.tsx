@@ -67,6 +67,14 @@ export default function App() {
   }
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const pathMatch = window.location.pathname.match(/^\/b\/([a-zA-Z0-9_-]+)/);
+    const inviteCode = (pathMatch && pathMatch[1]) || params.get('invite');
+    if (inviteCode) {
+      sendTelemetry('invite_link_clicked', { invite_code: inviteCode });
+      window.location.replace(`${APP_URL}/?invite=${encodeURIComponent(inviteCode)}`);
+      return;
+    }
     sendTelemetry('landing_view');
     fetch(`${API_URL}/api/campus/config`)
       .then((r) => (r.ok ? r.json() : null))

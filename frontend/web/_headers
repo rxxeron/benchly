@@ -4,6 +4,12 @@
 /flutter_service_worker.js
   Cache-Control: no-cache, no-store, must-revalidate
 
+/benchly-sw.js
+  Cache-Control: no-cache, no-store, must-revalidate
+
+/manifest.json
+  Cache-Control: no-cache, no-store, must-revalidate
+
 /main.dart.js
   Cache-Control: no-cache, no-store, must-revalidate
 

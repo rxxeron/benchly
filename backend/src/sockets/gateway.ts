@@ -165,7 +165,7 @@ export function registerSocketGateway(
                 socket.join(roomId);
 
                 await supabase.from('referrals').insert({ inviter_id: user.id, short_code: code, status: 'created' });
-                const inviteUrl = `https://benchly.live/b/${code}`;
+                const inviteUrl = `https://app.benchly.live/?invite=${code}`;
                 if (callback) callback({ success: true, code, inviteUrl, roomId });
                 socket.emit('invite_bench_created', { code, inviteUrl, roomId });
             } catch (e: any) {

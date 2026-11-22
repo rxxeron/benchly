@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 import '../config/app_config.dart';
+import '../utils/pwa_notifications.dart';
 import '../widgets/profile_editor_sheet.dart';
 import '../widgets/rive_lottie_beacons.dart';
 import '../widgets/staggered_reveal.dart';
@@ -317,7 +318,7 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
               children: [
                 Icon(Icons.info_outline_rounded, color: Color(0xFFEF4444), size: 20),
                 SizedBox(width: 8),
-                Text('Bench Invite', style: TextStyle(color: Colors.white, fontSize: 16)),
+                Text('Bench Invite', style: TextStyle(color: Color(0xFF1E1B18), fontSize: 16, fontWeight: FontWeight.w800)),
               ],
             ),
             content: Text(
@@ -348,6 +349,11 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
 
     socket.on('match_found', (data) {
       _searchCountdownTimer?.cancel();
+      notifyBenchlyEvent(
+        '🪑 Bench Match Found!',
+        'Paired with ${data['partnerAlias'] ?? 'an EWU classmate'} — say hi!',
+        tag: 'match_found',
+      );
       if (mounted) {
         setState(() => isSearching = false);
         Navigator.push(context, MaterialPageRoute(
@@ -388,6 +394,11 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
 
     socket.on('group_lounge_joined', (data) {
       _searchCountdownTimer?.cancel();
+      notifyBenchlyEvent(
+        '☕ Cafeteria Lounge Ready',
+        'Pulled up a seat in ${data['topic'] ?? 'Cafeteria Hangout'}!',
+        tag: 'group_lounge',
+      );
       if (mounted) {
         setState(() => isSearching = false);
         final topic = data['topic']?.toString() ?? 'Cafeteria Hangout';
@@ -562,7 +573,7 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
                   _startSearching();
                 },
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.white,
+                  foregroundColor: const Color(0xFF1E1B18),
                   side: BorderSide(color: Color(0xFF1E1B18).withValues(alpha: 0.28)),
                   minimumSize: const Size(double.infinity, 48),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -615,7 +626,7 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
             SizedBox(width: 8),
             Text(
               '15-Day Alias Rotation',
-              style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold),
+              style: TextStyle(color: Color(0xFF1E1B18), fontSize: 17, fontWeight: FontWeight.bold),
             ),
           ],
         ),
@@ -722,7 +733,7 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
                 'Private Bench Invitation',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: Colors.white,
+                  color: Color(0xFF1E1B18),
                   fontSize: 18,
                   fontWeight: FontWeight.w800,
                   letterSpacing: -0.4,
@@ -812,7 +823,7 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
                 if (modalCtx.mounted) {
                   setModalState(() {
                     generatedCode = data['code'];
-                    generatedUrl = data['inviteUrl'] ?? 'https://benchly.live/b/${data['code']}';
+                    generatedUrl = data['inviteUrl'] ?? 'https://app.benchly.live/?invite=${data['code']}';
                     isGenerating = false;
                   });
                 }
@@ -822,7 +833,7 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
               socket.emit('create_invite_bench');
             }
 
-            final url = generatedUrl ?? (generatedCode != null ? 'https://benchly.live/b/$generatedCode' : '');
+            final url = generatedUrl ?? (generatedCode != null ? 'https://app.benchly.live/?invite=$generatedCode' : '');
 
             return SafeArea(
               child: Padding(
@@ -915,9 +926,9 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
                               child: Text(
                                 url,
                                 style: const TextStyle(
-                                  color: Colors.white,
+                                  color: Color(0xFF1E1B18),
                                   fontSize: 13,
-                                  fontWeight: FontWeight.w600,
+                                  fontWeight: FontWeight.w700,
                                 ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
@@ -960,12 +971,12 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
                               label: const Text('Copy Link'),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: const Color(0xFFFFFFFF),
-                                foregroundColor: Colors.white,
+                                foregroundColor: const Color(0xFF1E1B18),
                                 elevation: 0,
                                 minimumSize: const Size(0, 46),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12),
-                                  side: BorderSide(color: Color(0xFF1E1B18).withValues(alpha: 0.15)),
+                                  side: const BorderSide(color: Color(0xFF1E1B18), width: 1.5),
                                 ),
                               ),
                             ),
@@ -1086,6 +1097,54 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
           ],
         ),
         actions: [
+          // Enable Alerts & Install PWA Pill Button
+          GestureDetector(
+            onTap: () async {
+              final messenger = ScaffoldMessenger.of(context);
+              final perm = await enableBenchlyNotifications();
+              final pwaRes = await promptBenchlyPwaInstall();
+              if (!mounted) return;
+              final msg = pwaRes == 'accepted'
+                  ? '📲 Benchly installed & notifications active!'
+                  : (perm == 'granted'
+                      ? '🔔 Match & chat notifications enabled!'
+                      : '🔔 Tap browser lock icon to allow notifications, or use "Add to Home Screen" to install PWA.');
+              messenger.showSnackBar(
+                SnackBar(
+                  content: Text(msg),
+                  backgroundColor: const Color(0xFF0FB881),
+                  duration: const Duration(seconds: 3),
+                ),
+              );
+            },
+            child: Container(
+              margin: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFFDCFCE7),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: const Color(0xFF1E1B18), width: 1.5),
+                boxShadow: const [
+                  BoxShadow(color: Color(0xFF1E1B18), offset: Offset(2, 2)),
+                ],
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.notifications_active_rounded, color: Color(0xFF047857), size: 14),
+                  SizedBox(width: 4),
+                  Text(
+                    'Alerts / App',
+                    style: TextStyle(
+                      color: Color(0xFF1E1B18),
+                      fontWeight: FontWeight.w800,
+                      fontSize: 11.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
           // Stones Balance Pill
           Container(
             margin: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),

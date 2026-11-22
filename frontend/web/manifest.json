@@ -1,13 +1,15 @@
 {
     "name": "Benchly — EWU Campus Adda",
     "short_name": "Benchly",
-    "start_url": ".",
+    "start_url": "/",
+    "scope": "/",
     "display": "standalone",
-    "background_color": "#000000",
-    "theme_color": "#000000",
+    "background_color": "#FFF9F0",
+    "theme_color": "#0FB881",
     "description": "Anonymous 1-on-1 & 5-Student Cafeteria Adda for East West University.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
+    "categories": ["social", "education"],
     "icons": [
         {
             "src": "icons/Icon-192.png",

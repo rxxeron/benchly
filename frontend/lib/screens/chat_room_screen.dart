@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 import '../config/app_config.dart';
+import '../utils/pwa_notifications.dart';
 import '../utils/screenshot_guard.dart';
 import '../widgets/mobile_container.dart';
 
@@ -280,6 +281,11 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   void _setupListeners() {
     _fetchPartnerCard(openSheet: false);
     widget.socket.on('new_message', (data) {
+      if (data is Map && data['isMine'] != true && data['isSystem'] != true) {
+        final sender = data['authorAlias']?.toString() ?? widget.partnerAlias;
+        final text = data['content']?.toString() ?? 'New message';
+        notifyBenchlyEvent('💬 $sender', text, tag: 'chat_msg');
+      }
       if (mounted) {
         setState(() {
           _partnerTyping = false;
@@ -305,6 +311,11 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       final fieldLabel = data['fieldLabel']?.toString() ?? 'profile info';
       final actualValue = data['actualValue']?.toString() ?? '';
       if (revealId.isEmpty) return;
+      notifyBenchlyEvent(
+        '🎯 Partner Guessed Right!',
+        '$guesserAlias guessed your $fieldLabel!',
+        tag: 'guess_reveal',
+      );
 
       showDialog(
         context: context,
@@ -389,6 +400,11 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     });
 
     widget.socket.on('extension_requested_by_partner', (_) {
+      notifyBenchlyEvent(
+        '⏳ +15m Extension Vote',
+        '${widget.partnerAlias} voted to extend the chat!',
+        tag: 'extend_vote',
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -401,6 +417,11 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     });
 
     widget.socket.on('partner_requested_handshake', (_) {
+      notifyBenchlyEvent(
+        '🤝 Handshake Request',
+        '${widget.partnerAlias} wants to reveal profiles!',
+        tag: 'handshake_req',
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -558,7 +579,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
           children: [
             Icon(Icons.handshake_rounded, color: Color(0xFF0FB881), size: 24),
             SizedBox(width: 8),
-            Text('Mutual Handshake!', style: TextStyle(color: Colors.white, fontSize: 17)),
+            Text('Mutual Handshake!', style: TextStyle(color: Color(0xFF1E1B18), fontSize: 17, fontWeight: FontWeight.w800)),
           ],
         ),
         content: Text(
@@ -1479,7 +1500,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                                     timeLabel,
                                     style: TextStyle(
                                       fontSize: 9.5,
-                                      color: Colors.white.withValues(alpha: isMe ? 0.65 : 0.35),
+                                      color: isMe ? Colors.white.withValues(alpha: 0.78) : const Color(0xFF575049),
                                     ),
                                   ),
                                 ),
