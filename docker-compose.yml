@@ -1,0 +1,47 @@
+services:
+  benchly-redis:
+    image: redis:7-alpine
+    container_name: benchly-redis
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-benchly_local_dev_change_me}", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-benchly_local_dev_change_me}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  benchly-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: benchly-backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-benchly_local_dev_change_me}@benchly-redis:6379
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./frontend/build/web:/frontend/build/web:ro
+    depends_on:
+      benchly-redis:
+        condition: service_healthy
+
+  benchly-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: benchly-worker
+    restart: unless-stopped
+    command: ["node", "dist/worker.js"]
+    env_file:
+      - ./backend/.env
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-benchly_local_dev_change_me}@benchly-redis:6379
+    depends_on:
+      benchly-redis:
+        condition: service_healthy

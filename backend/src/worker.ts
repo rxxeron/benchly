@@ -1,6 +1,7 @@
 import Redis from 'ioredis';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
+import { CanonicalHuffmanCodec } from './algorithms/huffman_codec';
 
 dotenv.config();
 
@@ -28,9 +29,22 @@ const supabase = createClient(
  * If a room reaches 30 minutes or concluded without being flushed,
  * this worker writes the ENTIRE transcript in ONE SINGLE ROW to public.room_conversations.
  */
+async function scanKeys(pattern: string): Promise<string[]> {
+    const found: string[] = [];
+    let cursor = '0';
+    do {
+        const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+        cursor = nextCursor;
+        if (keys && keys.length > 0) {
+            found.push(...keys);
+        }
+    } while (cursor !== '0');
+    return found;
+}
+
 async function archiveStaleRooms() {
     try {
-        const roomKeys = await redis.keys('room_messages:*');
+        const roomKeys = await scanKeys('room_messages:*');
         if (roomKeys.length === 0) return;
 
         for (const key of roomKeys) {
@@ -63,17 +77,24 @@ async function archiveStaleRooms() {
                 const user2 = authorIds[1] || null;
 
                 const durationSec = Math.round((Date.now() - firstMsgTime) / 1000);
+                const sealedArchive = CanonicalHuffmanCodec.sealEncryptedHuffmanArchive(JSON.stringify(messagesList));
 
                 await supabase.from('room_conversations').insert({
                     room_id: roomId,
                     user1_id: user1,
                     user2_id: user2,
-                    messages: messagesList,
+                    messages: [],
+                    huffman_meta: sealedArchive,
+                    compression_savings_pct: sealedArchive.savingsPercent,
                     messages_count: messagesList.length,
                     duration_seconds: durationSec,
                     handshake_agreed: isHandshakeAgreed,
                     closed_at: new Date().toISOString()
                 });
+
+                console.log(
+                    `🔐🗜️ Worker Huffman+AES-256-GCM archived room ${roomId}: ${sealedArchive.originalBytes}B -> ${sealedArchive.compressedBytes}B (${sealedArchive.savingsPercent}% saved)`
+                );
 
                 await redis.del(
                     key,

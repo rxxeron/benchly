@@ -1,0 +1,47 @@
+name: Flutter Android App Release Build
+
+on:
+  push:
+    branches: [flutter-app, main]
+    tags: ['v*']
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/build-flutter-app.yml'
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install Dependencies & Analyze
+        working-directory: frontend
+        run: |
+          flutter pub get
+          flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Build Release APK
+        working-directory: frontend
+        run: |
+          flutter build apk --release \
+            --dart-define=SUPABASE_URL=${{ secrets.SUPABASE_URL }} \
+            --dart-define=SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }} \
+            --dart-define=GOOGLE_WEB_CLIENT_ID=${{ secrets.GOOGLE_WEB_CLIENT_ID }} \
+            --dart-define=SOCKET_URL=https://api.benchly.live
+
+      - name: Upload Release APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchly-android-apk
+          path: frontend/build/app/outputs/flutter-apk/app-release.apk

@@ -1,8 +1,9 @@
 import 'dart:convert';
-import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/app_config.dart';
+import '../widgets/profile_editor_sheet.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -14,14 +15,15 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _isLoading = true;
   String? _currentAlias;
-  DateTime? _aliasChangedAt;
-  int _aliasChangeCount = 0;
+  String _deptCode = 'CSE';
+  String? _currentSemester;
+  String? _admittedSemester;
+  String _realName = '';
+  int? _realAge;
+  bool _allowGuessing = true;
   String? _gender;
   String? _ageRange;
   String? _matchPreference;
-
-  final List<String> _adj = ['Silent', 'Brave', 'Sleepy', 'Neon', 'Midnight', 'Caffeinated', 'Phantom', 'Shadow', 'Crimson', 'Lost', 'Chill', 'Hungry', 'Genius', 'Rebel', 'Mysterious', 'Electric', 'Chaotic', 'Zen'];
-  final List<String> _noun = ['Panther', 'Scholar', 'Coder', 'Freshman', 'Backbencher', 'Ninja', 'Ghost', 'Senior', 'Engineer', 'Debater', 'Gamer', 'Potato', 'Dinosaur', 'Penguin', 'Hacker', 'Overthinker'];
 
   @override
   void initState() {
@@ -36,17 +38,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       final data = await Supabase.instance.client
           .from('users')
-          .select('generated_alias, alias_changed_at, alias_change_count, gender, age_range, match_preference')
+          .select('generated_alias, dept_code, semester_intake, gender, age_range, match_preference')
           .eq('id', user.id)
           .single();
+
+      String? admittedSem;
+      String realName = '';
+      int? realAge;
+      bool allowGuess = true;
+
+      final token = Supabase.instance.client.auth.currentSession?.accessToken;
+      if (token != null) {
+        try {
+          final res = await http.get(
+            Uri.parse('${AppConfig.socketUrl}/api/profile/me'),
+            headers: {'Authorization': 'Bearer $token'},
+          );
+          if (res.statusCode == 200) {
+            final serverProfile = jsonDecode(res.body) as Map<String, dynamic>;
+            admittedSem = serverProfile['admittedSemester']?.toString();
+            realName = (serverProfile['realName'] ?? '').toString();
+            if (serverProfile['realAge'] != null) {
+              realAge = int.tryParse(serverProfile['realAge'].toString());
+            }
+            allowGuess = serverProfile['allowGuessing'] != false;
+          }
+        } catch (_) {}
+      }
 
       if (mounted) {
         setState(() {
           _currentAlias = data['generated_alias'];
-          if (data['alias_changed_at'] != null) {
-            _aliasChangedAt = DateTime.parse(data['alias_changed_at']);
-          }
-          _aliasChangeCount = data['alias_change_count'] ?? 0;
+          _deptCode = (data['dept_code'] ?? 'CSE').toString();
+          _currentSemester = data['semester_intake']?.toString();
+          _admittedSemester = admittedSem;
+          _realName = realName;
+          _realAge = realAge;
+          _allowGuessing = allowGuess;
           _gender = data['gender'];
           _ageRange = data['age_range'];
           _matchPreference = data['match_preference'] ?? 'anyone';
@@ -57,6 +85,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) {
         setState(() => _isLoading = false);
       }
+    }
+  }
+
+  Future<void> _openProfileEditor() async {
+    final result = await showProfileEditorSheet(
+      context,
+      currentAlias: _currentAlias ?? 'Anonymous',
+      currentDept: _deptCode,
+      currentSemester: _currentSemester,
+    );
+
+    if (result != null && mounted) {
+      setState(() {
+        _currentAlias = result.alias;
+        _deptCode = result.deptCode;
+        _currentSemester = result.currentSemester;
+        _admittedSemester = result.admittedSemester;
+        _realName = result.realName;
+        _realAge = result.realAge;
+        _allowGuessing = result.allowGuessing;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Updated: ${result.alias} • ${result.badge}'),
+          backgroundColor: const Color(0xFF0FB881),
+        ),
+      );
     }
   }
 
@@ -80,59 +135,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _regenerateAlias() async {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
-
-    final random = Random();
-    final a = _adj[random.nextInt(_adj.length)];
-    final n = _noun[random.nextInt(_noun.length)];
-    final num = random.nextInt(90) + 10;
-    final newAlias = '$a $n $num';
-
-    try {
-      final res = await Supabase.instance.client.rpc('rotate_user_alias', params: {
-        'p_user_id': user.id,
-        'p_new_alias': newAlias,
-        'p_change_type': 'manual',
-      });
-
-      final parsed = res is String ? jsonDecode(res) : Map<String, dynamic>.from(res);
-      final assignedAlias = parsed['new_alias'] ?? newAlias;
-
-      if (mounted) {
-        setState(() {
-          _currentAlias = assignedAlias;
-          _aliasChangedAt = DateTime.now();
-          _aliasChangeCount = _aliasChangeCount + 1;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Alias updated to: $assignedAlias'),
-            backgroundColor: const Color(0xFF10B981),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        final isCooldown = e.toString().contains('cooldown');
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(isCooldown ? '15-day cooldown active. Please wait.' : 'Error regenerating alias: $e'),
-            backgroundColor: const Color(0xFFEF4444),
-          ),
-        );
-      }
-    }
-  }
-
   void _showAliasHistoryModal() {
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return;
 
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF121622),
+      backgroundColor: const Color(0xFFFFFFFF),
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) {
         return FutureBuilder<List<Map<String, dynamic>>>(
@@ -145,7 +154,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const SizedBox(
                 height: 250,
-                child: Center(child: CircularProgressIndicator(color: Color(0xFF10B981))),
+                child: Center(child: CircularProgressIndicator(color: Color(0xFF0FB881))),
               );
             }
             final list = snapshot.data ?? [];
@@ -157,18 +166,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   const Row(
                     children: [
-                      Icon(Icons.history_rounded, color: Color(0xFF10B981), size: 20),
+                      Icon(Icons.history_rounded, color: Color(0xFF0FB881), size: 20),
                       SizedBox(width: 8),
                       Text(
                         'Alias Rotation History',
-                        style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                        style: TextStyle(color: const Color(0xFF1E1B18), fontSize: 16, fontWeight: FontWeight.bold),
                       ),
                     ],
                   ),
                   const SizedBox(height: 6),
                   Text(
                     'Audit records retained for safety & harassment investigations.',
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 11),
+                    style: TextStyle(color: Color(0xFF1E1B18).withValues(alpha: 0.60), fontSize: 11),
                   ),
                   const SizedBox(height: 16),
                   if (list.isEmpty)
@@ -177,7 +186,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       child: Center(
                         child: Text(
                           'No alias changes recorded yet.',
-                          style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 13),
+                          style: TextStyle(color: Color(0xFF1E1B18).withValues(alpha: 0.50), fontSize: 13),
                         ),
                       ),
                     )
@@ -186,7 +195,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       child: ListView.separated(
                         shrinkWrap: true,
                         itemCount: list.length,
-                        separatorBuilder: (_, _) => Divider(color: Colors.white.withValues(alpha: 0.05)),
+                        separatorBuilder: (_, _) => Divider(color: Color(0xFF1E1B18).withValues(alpha: 0.15)),
                         itemBuilder: (context, i) {
                           final item = list[i];
                           final created = DateTime.tryParse(item['created_at'] ?? '')?.toLocal();
@@ -196,9 +205,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             contentPadding: EdgeInsets.zero,
                             title: Text(
                               '${item['old_alias']} ➔ ${item['new_alias']}',
-                              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                              style: const TextStyle(color: const Color(0xFF1E1B18), fontSize: 13, fontWeight: FontWeight.w600),
                             ),
-                            subtitle: Text('$type • $dateStr', style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11)),
+                            subtitle: Text('$type • $dateStr', style: TextStyle(color: Color(0xFF1E1B18).withValues(alpha: 0.50), fontSize: 11)),
                           );
                         },
                       ),
@@ -223,13 +232,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF181920),
-        title: const Text('Delete Account', style: TextStyle(color: Colors.white)),
-        content: const Text('Are you sure you want to delete your account? This action cannot be undone.', style: TextStyle(color: Colors.white70)),
+        backgroundColor: const Color(0xFFFFFFFF),
+        title: const Text('Delete Account', style: TextStyle(color: const Color(0xFF1E1B18))),
+        content: const Text('Are you sure you want to delete your account? This action cannot be undone.', style: TextStyle(color: const Color(0xFF44403C))),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel', style: TextStyle(color: Colors.white)),
+            child: const Text('Cancel', style: TextStyle(color: const Color(0xFF1E1B18))),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
@@ -240,19 +249,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
 
     if (confirm == true) {
-      // Cascade delete needs admin, so we just sign out for now
-      await _logout();
+      try {
+        final token = Supabase.instance.client.auth.currentSession?.accessToken;
+        if (token != null) {
+          final baseUrl = AppConfig.socketUrl.replaceAll(RegExp(r'/+$'), '');
+          final res = await http.delete(
+            Uri.parse('$baseUrl/api/account'),
+            headers: {'Authorization': 'Bearer $token'},
+          ).timeout(const Duration(seconds: 10));
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Failed to delete account. Please try again.')),
+              );
+            }
+            return;
+          }
+        }
+        await _logout();
+      } catch (_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not reach server to delete account.')),
+          );
+        }
+      }
     }
-  }
-
-  int _daysUntilAliasChange() {
-    // 1st alias change is completely free anytime (0 wait)
-    if (_aliasChangeCount == 0 || _aliasChangedAt == null) return 0;
-    final nextChangeDate = _aliasChangedAt!.add(Duration(days: AppConfig.aliasChangeCooldownDays));
-    final diff = nextChangeDate.difference(DateTime.now());
-    if (diff.isNegative) return 0;
-    final days = (diff.inSeconds / (24 * 3600)).ceil();
-    return days <= 0 ? 1 : days;
   }
 
   Widget _buildSectionHeader(String title) {
@@ -261,7 +283,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       child: Text(
         title,
         style: TextStyle(
-          color: Colors.white.withValues(alpha: 0.4),
+          color: Color(0xFF1E1B18).withValues(alpha: 0.50),
           fontSize: 11,
           fontWeight: FontWeight.w700,
           letterSpacing: 1.2,
@@ -273,9 +295,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildGroup(List<Widget> children) {
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF181920),
+        color: const Color(0xFFFFFFFF),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+        border: Border.all(color: Color(0xFF1E1B18).withValues(alpha: 0.15)),
       ),
       child: Column(
         children: children,
@@ -286,7 +308,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildDivider() {
     return Container(
       height: 1,
-      color: Colors.white.withValues(alpha: 0.06),
+      color: Color(0xFF1E1B18).withValues(alpha: 0.15),
       margin: const EdgeInsets.symmetric(horizontal: 16),
     );
   }
@@ -296,7 +318,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     Widget? trailing,
     Widget? subtitle,
     VoidCallback? onTap,
-    Color textColor = Colors.white,
+    Color textColor = const Color(0xFF1E1B18),
   }) {
     return InkWell(
       onTap: onTap,
@@ -341,25 +363,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     if (_isLoading) {
       return const Scaffold(
-        backgroundColor: Color(0xFF0F1015),
-        body: Center(child: CircularProgressIndicator(color: Color(0xFF6366F1))),
+        backgroundColor: Color(0xFFFFF9F0),
+        body: Center(child: CircularProgressIndicator(color: Color(0xFF0FB881))),
       );
     }
 
-    final daysToWait = _daysUntilAliasChange();
-
     return Scaffold(
-      backgroundColor: const Color(0xFF0F1015),
+      backgroundColor: const Color(0xFFFFF9F0),
       appBar: AppBar(
         title: const Text(
           'Settings',
           style: TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.w800,
-            color: Colors.white,
+            color: const Color(0xFF1E1B18),
           ),
         ),
-        backgroundColor: const Color(0xFF0F1015),
+        backgroundColor: const Color(0xFFFFF9F0),
         elevation: 0,
       ),
       body: SingleChildScrollView(
@@ -367,45 +387,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildSectionHeader('PROFILE'),
+            _buildSectionHeader('PROFILE & VIBE'),
             _buildGroup([
               _buildListTile(
-                title: 'Current Alias',
+                title: 'Nickname',
                 subtitle: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       _currentAlias ?? 'Loading...',
                       style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.85),
-                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF1E1B18).withValues(alpha: 0.85),
+                        fontWeight: FontWeight.w700,
                         fontSize: 14,
                       ),
                     ),
                     const SizedBox(height: 2),
-                    Text(
-                      _aliasChangeCount == 0
-                          ? '1st change is available anytime'
-                          : (daysToWait > 0
-                              ? 'Next change in $daysToWait days'
-                              : 'Ready for change (15-day interval)'),
+                    const Text(
+                      'Change anytime • Server-generated fresh vibes',
                       style: TextStyle(
-                        color: _aliasChangeCount == 0
-                            ? const Color(0xFF38BDF8)
-                            : Colors.white.withValues(alpha: 0.4),
+                        color: Color(0xFF34D399),
                         fontSize: 11,
-                        fontWeight: _aliasChangeCount == 0 ? FontWeight.w600 : FontWeight.w400,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ],
                 ),
                 trailing: ElevatedButton(
-                  onPressed: daysToWait > 0 ? null : _regenerateAlias,
+                  onPressed: _openProfileEditor,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF10B981),
+                    backgroundColor: const Color(0xFF0FB881),
                     foregroundColor: Colors.white,
-                    disabledBackgroundColor: const Color(0xFF262838),
-                    disabledForegroundColor: Colors.white.withValues(alpha: 0.3),
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                     minimumSize: const Size(0, 36),
                     shape: RoundedRectangleBorder(
@@ -413,11 +425,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     elevation: 0,
                   ),
-                  child: Text(
-                    daysToWait > 0
-                        ? '${daysToWait}d wait'
-                        : (_aliasChangeCount == 0 ? 'Change (Free)' : 'Rotate Now'),
-                    style: const TextStyle(
+                  child: const Text(
+                    'Change',
+                    style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
                     ),
@@ -426,29 +436,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               _buildDivider(),
               _buildListTile(
+                title: 'Department & Semester',
+                subtitle: Text(
+                  '$_deptCode${_currentSemester != null ? ' • $_currentSemester' : ' • Tap to set semester'}${_admittedSemester != null ? ' (Admitted $_admittedSemester)' : ''}',
+                  style: TextStyle(color: Color(0xFF1E1B18).withValues(alpha: 0.75), fontSize: 12),
+                ),
+                trailing: const Icon(Icons.edit_rounded, size: 18, color: Color(0xFF0FB881)),
+                onTap: _openProfileEditor,
+              ),
+              _buildDivider(),
+              _buildListTile(
+                title: 'Private Info & Guessing Game',
+                subtitle: Text(
+                  '${_realName.isNotEmpty ? 'Name set' : 'Name hidden'} • ${_realAge != null ? 'Age $_realAge' : 'Age not set'} • Guessing ${_allowGuessing ? 'ON 🎯' : 'OFF'}',
+                  style: TextStyle(color: Color(0xFF1E1B18).withValues(alpha: 0.75), fontSize: 12),
+                ),
+                trailing: const Icon(Icons.tune_rounded, size: 18, color: Color(0xFF818CF8)),
+                onTap: _openProfileEditor,
+              ),
+              _buildDivider(),
+              _buildListTile(
                 title: 'Alias Rotation History',
                 subtitle: const Text(
-                  'Audit log of previous aliases (Safety record)',
-                  style: TextStyle(color: Colors.white38, fontSize: 11),
+                  'Audit log of previous nicknames (Safety record)',
+                  style: TextStyle(color: const Color(0xFF78716C), fontSize: 11),
                 ),
-                trailing: const Icon(Icons.history_rounded, size: 18, color: Color(0xFF10B981)),
+                trailing: const Icon(Icons.history_rounded, size: 18, color: Color(0xFF0FB881)),
                 onTap: _showAliasHistoryModal,
               ),
               _buildDivider(),
               _buildListTile(
                 title: 'Gender',
-                trailing: DropdownButton<String>(
-                  value: _gender?.toLowerCase(),
-                  dropdownColor: const Color(0xFF181920),
-                  underline: const SizedBox(),
-                  style: const TextStyle(color: Colors.white),
-                  items: const [
-                    DropdownMenuItem(value: 'male', child: Text('Male')),
-                    DropdownMenuItem(value: 'female', child: Text('Female')),
-                  ],
-                  onChanged: (val) {
-                    if (val != null) _updateField('gender', val);
-                  },
+                subtitle: const Text(
+                  'Locked after onboarding for campus safety',
+                  style: TextStyle(color: const Color(0xFF78716C), fontSize: 11),
+                ),
+                trailing: Text(
+                  _gender == null
+                      ? 'Not set'
+                      : (_gender!.toLowerCase() == 'female' ? 'Female' : 'Male'),
+                  style: TextStyle(
+                    color: Color(0xFF1E1B18).withValues(alpha: 0.80),
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
               _buildDivider(),
@@ -456,10 +486,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 title: 'Age Range',
                 trailing: DropdownButton<String>(
                   value: _ageRange,
-                  hint: Text('Select', style: TextStyle(color: Colors.white.withValues(alpha: 0.5))),
-                  dropdownColor: const Color(0xFF181920),
+                  hint: Text('Select', style: TextStyle(color: Color(0xFF1E1B18).withValues(alpha: 0.60))),
+                  dropdownColor: const Color(0xFFFFFFFF),
                   underline: const SizedBox(),
-                  style: const TextStyle(color: Colors.white),
+                  style: const TextStyle(color: const Color(0xFF1E1B18)),
                   items: const [
                     DropdownMenuItem(value: '18-19', child: Text('18-19')),
                     DropdownMenuItem(value: '20-21', child: Text('20-21')),
@@ -473,55 +503,62 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ]),
             
-            _buildSectionHeader('CHAT PREFERENCES'),
-            _buildGroup([
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Default Match Filter', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500)),
-                    Row(
-                      children: ['anyone', 'guys', 'girls'].map((pref) {
-                        final isSelected = _matchPreference == pref;
-                        String label = pref == 'guys' ? 'Guys' : pref == 'girls' ? 'Girls' : 'Anyone';
-                        return Padding(
-                          padding: const EdgeInsets.only(left: 8),
-                          child: InkWell(
-                            onTap: () => _updateField('match_preference', pref),
-                            borderRadius: BorderRadius.circular(12),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: isSelected ? const Color(0xFF6366F1).withValues(alpha: 0.2) : Colors.transparent,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: isSelected ? const Color(0xFF6366F1) : Colors.white.withValues(alpha: 0.2),
+            if (_gender?.toLowerCase() == 'female') ...[
+              _buildSectionHeader('CHAT PREFERENCES'),
+              _buildGroup([
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Default Match Filter', style: TextStyle(color: const Color(0xFF1E1B18), fontSize: 15, fontWeight: FontWeight.w500)),
+                      Row(
+                        children: [
+                          ('anyone', 'Anyone'),
+                          ('female', 'Girls Only'),
+                        ].map((entry) {
+                          final pref = entry.$1;
+                          final label = entry.$2;
+                          final normalizedPref = (_matchPreference == 'girls' || _matchPreference == 'female') ? 'female' : 'anyone';
+                          final isSelected = normalizedPref == pref;
+                          return Padding(
+                            padding: const EdgeInsets.only(left: 8),
+                            child: InkWell(
+                              onTap: () => _updateField('match_preference', pref),
+                              borderRadius: BorderRadius.circular(12),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: isSelected ? const Color(0xFF0FB881).withValues(alpha: 0.2) : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: isSelected ? const Color(0xFF0FB881) : Color(0xFF1E1B18).withValues(alpha: 0.28),
+                                  ),
                                 ),
-                              ),
-                              child: Text(
-                                label,
-                                style: TextStyle(
-                                  color: isSelected ? const Color(0xFF6366F1) : Colors.white.withValues(alpha: 0.7),
-                                  fontSize: 12,
-                                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                child: Text(
+                                  label,
+                                  style: TextStyle(
+                                    color: isSelected ? const Color(0xFF34D399) : Color(0xFF1E1B18).withValues(alpha: 0.80),
+                                    fontSize: 12,
+                                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  ],
+                          );
+                        }).toList(),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ]),
+              ]),
+            ],
 
             _buildSectionHeader('ACCOUNT'),
             _buildGroup([
               _buildListTile(
                 title: 'Log Out',
-                textColor: Colors.white,
+                textColor: const Color(0xFF1E1B18),
                 onTap: _logout,
               ),
               _buildDivider(),
@@ -536,7 +573,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _buildGroup([
               _buildListTile(
                 title: 'App Version',
-                trailing: Text('Benchly v1.1.0 (EWU Edition)', style: TextStyle(color: Colors.white.withValues(alpha: 0.5))),
+                trailing: Text('Benchly v2.0.0 (EWU Edition)', style: TextStyle(color: Color(0xFF1E1B18).withValues(alpha: 0.60))),
               ),
             ]),
             

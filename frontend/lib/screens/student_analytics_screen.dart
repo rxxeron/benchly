@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/app_config.dart';
-import '../widgets/mobile_container.dart';
+import '../widgets/staggered_reveal.dart';
 
 class StudentAnalyticsScreen extends StatefulWidget {
   const StudentAnalyticsScreen({super.key});
@@ -33,6 +33,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
   int _userStreak = 0;
   String? _userDept;
   String? _userBatch;
+  String? _userSemester;
   int _totalReferrals = 0;
 
   @override
@@ -73,7 +74,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
     try {
       final data = await Supabase.instance.client
           .from('users')
-          .select('generated_alias, streak_count, dept_code, batch_year, total_referrals')
+          .select('generated_alias, streak_count, dept_code, batch_year, semester_intake, total_referrals')
           .eq('id', user.id)
           .maybeSingle();
 
@@ -83,6 +84,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
           _userStreak = data['streak_count'] ?? 0;
           _userDept = data['dept_code'];
           _userBatch = data['batch_year'];
+          _userSemester = data['semester_intake']?.toString();
           _totalReferrals = data['total_referrals'] ?? 0;
         });
       }
@@ -127,11 +129,16 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
         return;
       }
     } catch (_) {
-      // 2. Fallback to backend REST endpoint if RPC is unreachable
+      // 2. Fallback to authenticated backend REST endpoint if RPC is unreachable
       try {
+        final token = Supabase.instance.client.auth.currentSession?.accessToken;
+        if (token == null) throw Exception('Not authenticated');
         final baseUrl = AppConfig.socketUrl.replaceAll(RegExp(r'/+$'), '');
         final response = await http
-            .get(Uri.parse('$baseUrl/api/student/analytics?userId=${user.id}&timeframe=$_currentPeriod'))
+            .get(
+              Uri.parse('$baseUrl/api/student/analytics?timeframe=$_currentPeriod'),
+              headers: {'Authorization': 'Bearer $token'},
+            )
             .timeout(const Duration(seconds: 4));
 
         if (response.statusCode == 200 && mounted) {
@@ -184,9 +191,9 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF090B10),
+      backgroundColor: const Color(0xFFFFF9F0),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF090B10),
+        backgroundColor: const Color(0xFFFFF9F0),
         elevation: 0,
         scrolledUnderElevation: 0,
         title: Row(
@@ -194,10 +201,10 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
             Container(
               padding: const EdgeInsets.all(7),
               decoration: BoxDecoration(
-                color: const Color(0xFF10B981).withValues(alpha: 0.15),
+                color: const Color(0xFF0FB881).withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: const Icon(Icons.insights_rounded, color: Color(0xFF10B981), size: 18),
+              child: const Icon(Icons.insights_rounded, color: Color(0xFF0FB881), size: 18),
             ),
             const SizedBox(width: 10),
             const Text(
@@ -205,7 +212,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
-                color: Colors.white,
+                color: const Color(0xFF1E1B18),
                 letterSpacing: -0.4,
               ),
             ),
@@ -214,25 +221,24 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
         actions: [
           IconButton(
             tooltip: 'Refresh Stats',
-            icon: const Icon(Icons.refresh_rounded, color: Colors.white70, size: 20),
+            icon: const Icon(Icons.refresh_rounded, color: const Color(0xFF44403C), size: 20),
             onPressed: () => _fetchAnalytics(),
           ),
         ],
       ),
-      body: MobileContainer(
-        child: RefreshIndicator(
+      body: RefreshIndicator(
           onRefresh: () => _fetchAnalytics(silent: true),
-          color: const Color(0xFF10B981),
-          backgroundColor: const Color(0xFF161A26),
+          color: const Color(0xFF0FB881),
+          backgroundColor: const Color(0xFFFFFFFF),
           child: ListView(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             children: [
               // User Identity & Streak Banner
-              _buildStudentHeader(),
+              StaggeredReveal(index: 0, child: _buildStudentHeader()),
               const SizedBox(height: 18),
 
               // Timeframe Segmented Control (Daily, Weekly, Monthly)
-              _buildTimeframeSelector(),
+              StaggeredReveal(index: 1, child: _buildTimeframeSelector()),
               const SizedBox(height: 18),
 
               if (_error != null)
@@ -259,44 +265,50 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                 ),
 
               // Engagement KPI Grid
-              _buildMetricGrid(),
+              StaggeredReveal(index: 2, child: _buildMetricGrid()),
               const SizedBox(height: 18),
 
               // Friends Brought / Referral Impact Card
-              _buildReferralImpactCard(),
+              StaggeredReveal(index: 3, child: _buildReferralImpactCard()),
               const SizedBox(height: 18),
 
               // Sent vs Received Balance Breakdown
-              _buildMessageBalanceCard(),
+              StaggeredReveal(index: 4, child: _buildMessageBalanceCard()),
               const SizedBox(height: 18),
 
               // Adda Highlights & Privacy Notice
-              _buildHighlightsCard(),
+              StaggeredReveal(index: 5, child: _buildHighlightsCard()),
               const SizedBox(height: 30),
             ],
           ),
         ),
-      ),
     );
   }
 
   Widget _buildStudentHeader() {
     final alias = _userAlias ?? 'Anonymous Student';
-    final dept = _userDept != null ? '${_userDept!}${_userBatch != null ? " '$_userBatch" : ""}' : 'EWU Student';
+    final shortBatch = (_userBatch != null && _userBatch!.length >= 2)
+        ? "'${_userBatch!.substring(_userBatch!.length - 2)}"
+        : '';
+    final dept = _userDept != null && _userDept!.isNotEmpty
+        ? (_userSemester != null && _userSemester!.isNotEmpty
+            ? '${_userDept!} • ${_userSemester!}'
+            : '${_userDept!}${shortBatch.isNotEmpty ? " $shortBatch" : ""}')
+        : 'EWU Student';
 
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
-            const Color(0xFF10B981).withValues(alpha: 0.16),
-            const Color(0xFF0E1A18),
+            const Color(0xFF0FB881).withValues(alpha: 0.16),
+            const Color(0xFFDCFCE7),
           ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFF10B981).withValues(alpha: 0.25)),
+        border: Border.all(color: const Color(0xFF0FB881).withValues(alpha: 0.25)),
       ),
       child: Row(
         children: [
@@ -304,12 +316,12 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
             width: 48,
             height: 48,
             decoration: BoxDecoration(
-              color: const Color(0xFF10B981).withValues(alpha: 0.2),
+              color: const Color(0xFF0FB881).withValues(alpha: 0.2),
               shape: BoxShape.circle,
-              border: Border.all(color: const Color(0xFF10B981).withValues(alpha: 0.4)),
+              border: Border.all(color: const Color(0xFF0FB881).withValues(alpha: 0.4)),
             ),
             child: const Center(
-              child: Icon(Icons.person_outline_rounded, color: Color(0xFF10B981), size: 24),
+              child: Icon(Icons.person_outline_rounded, color: Color(0xFF0FB881), size: 24),
             ),
           ),
           const SizedBox(width: 14),
@@ -325,7 +337,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                         style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w800,
-                          color: Colors.white,
+                          color: const Color(0xFF1E1B18),
                           letterSpacing: -0.3,
                         ),
                         maxLines: 1,
@@ -336,13 +348,13 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF10B981).withValues(alpha: 0.2),
+                        color: const Color(0xFF0FB881).withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
                         dept,
                         style: const TextStyle(
-                          color: Color(0xFF10B981),
+                          color: Color(0xFF0FB881),
                           fontSize: 10,
                           fontWeight: FontWeight.w700,
                         ),
@@ -355,7 +367,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                   'Privacy-first adda stats for $_periodLabel',
                   style: TextStyle(
                     fontSize: 11,
-                    color: Colors.white.withValues(alpha: 0.6),
+                    color: Color(0xFF1E1B18).withValues(alpha: 0.70),
                   ),
                 ),
               ],
@@ -376,7 +388,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                   Text(
                     '$_userStreak',
                     style: const TextStyle(
-                      color: Color(0xFFFBBF24),
+                      color: Color(0xFFD97706),
                       fontWeight: FontWeight.w800,
                       fontSize: 12,
                     ),
@@ -393,9 +405,9 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: const Color(0xFF121622),
+        color: const Color(0xFFFFFFFF),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+        border: Border.all(color: Color(0xFF1E1B18).withValues(alpha: 0.15)),
       ),
       child: Row(
         children: [
@@ -421,7 +433,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
           duration: const Duration(milliseconds: 180),
           padding: const EdgeInsets.symmetric(vertical: 8),
           decoration: BoxDecoration(
-            color: isSelected ? const Color(0xFF10B981) : Colors.transparent,
+            color: isSelected ? const Color(0xFF0FB881) : Colors.transparent,
             borderRadius: BorderRadius.circular(10),
           ),
           child: Center(
@@ -430,7 +442,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                color: isSelected ? Colors.white : Colors.white60,
+                color: isSelected ? const Color(0xFF1E1B18) : const Color(0xFF575049),
               ),
             ),
           ),
@@ -459,7 +471,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
           title: 'People Talked To',
           value: '$people',
           icon: Icons.people_alt_rounded,
-          accentColor: const Color(0xFF10B981), // Emerald
+          accentColor: const Color(0xFF0FB881), // Emerald
           subtitle: '$totalChats bench sessions',
         ),
         _buildMetricCard(
@@ -473,7 +485,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
           title: 'Messages Sent',
           value: '$sent',
           icon: Icons.arrow_upward_rounded,
-          accentColor: const Color(0xFF38BDF8), // Sky Blue
+          accentColor: const Color(0xFF0284C7), // Sky Blue
           subtitle: 'Your bench thoughts',
         ),
         _buildMetricCard(
@@ -511,9 +523,9 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFF121622),
+        color: const Color(0xFFFFFFFF),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+        border: Border.all(color: Color(0xFF1E1B18).withValues(alpha: 0.15)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -527,7 +539,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
-                  color: Colors.white.withValues(alpha: 0.65),
+                  color: Color(0xFF1E1B18).withValues(alpha: 0.75),
                 ),
               ),
               Container(
@@ -544,14 +556,14 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
               ? const SizedBox(
                   height: 18,
                   width: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF10B981)),
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF0FB881)),
                 )
               : Text(
                   value,
                   style: const TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.w800,
-                    color: Colors.white,
+                    color: const Color(0xFF1E1B18),
                     letterSpacing: -0.4,
                   ),
                 ),
@@ -559,7 +571,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
             subtitle,
             style: TextStyle(
               fontSize: 10,
-              color: Colors.white.withValues(alpha: 0.4),
+              color: Color(0xFF1E1B18).withValues(alpha: 0.50),
             ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
@@ -580,9 +592,9 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF121622),
+        color: const Color(0xFFFFFFFF),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+        border: Border.all(color: Color(0xFF1E1B18).withValues(alpha: 0.15)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -595,14 +607,14 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
-                  color: Colors.white,
+                  color: const Color(0xFF1E1B18),
                 ),
               ),
               Text(
                 'Sent vs Received',
                 style: TextStyle(
                   fontSize: 11,
-                  color: Colors.white38,
+                  color: const Color(0xFF78716C),
                 ),
               ),
             ],
@@ -616,7 +628,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                 children: [
                   Expanded(
                     flex: (sentPct * 100).round().clamp(1, 99),
-                    child: Container(color: const Color(0xFF38BDF8)),
+                    child: Container(color: const Color(0xFF0284C7)),
                   ),
                   Expanded(
                     flex: (recvPct * 100).round().clamp(1, 99),
@@ -632,11 +644,11 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
             children: [
               Row(
                 children: [
-                  Container(width: 8, height: 8, decoration: const BoxDecoration(color: Color(0xFF38BDF8), shape: BoxShape.circle)),
+                  Container(width: 8, height: 8, decoration: const BoxDecoration(color: Color(0xFF0284C7), shape: BoxShape.circle)),
                   const SizedBox(width: 6),
                   Text(
                     'Sent: $sent (${(sentPct * 100).round()}%)',
-                    style: const TextStyle(fontSize: 11, color: Colors.white70),
+                    style: const TextStyle(fontSize: 11, color: const Color(0xFF44403C)),
                   ),
                 ],
               ),
@@ -646,7 +658,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                   const SizedBox(width: 6),
                   Text(
                     'Received: $received (${(recvPct * 100).round()}%)',
-                    style: const TextStyle(fontSize: 11, color: Colors.white70),
+                    style: const TextStyle(fontSize: 11, color: const Color(0xFF44403C)),
                   ),
                 ],
               ),
@@ -666,7 +678,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
         gradient: LinearGradient(
           colors: [
             const Color(0xFF6366F1).withValues(alpha: 0.14),
-            const Color(0xFF10B981).withValues(alpha: 0.10),
+            const Color(0xFF0FB881).withValues(alpha: 0.10),
           ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -696,7 +708,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
-                      color: Colors.white,
+                      color: const Color(0xFF1E1B18),
                     ),
                   ),
                 ],
@@ -704,12 +716,12 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF10B981).withValues(alpha: 0.2),
+                  color: const Color(0xFF0FB881).withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: const Text(
                   '+5 💎 / Friend',
-                  style: TextStyle(color: Color(0xFF10B981), fontSize: 10, fontWeight: FontWeight.bold),
+                  style: TextStyle(color: Color(0xFF0FB881), fontSize: 10, fontWeight: FontWeight.bold),
                 ),
               ),
             ],
@@ -721,7 +733,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                 child: Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF121622),
+                    color: const Color(0xFFFFFFFF),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Column(
@@ -729,12 +741,12 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                     children: [
                       Text(
                         'Friends Invited',
-                        style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.5)),
+                        style: TextStyle(fontSize: 11, color: Color(0xFF1E1B18).withValues(alpha: 0.60)),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         '$_totalReferrals',
-                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white),
+                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: const Color(0xFF1E1B18)),
                       ),
                     ],
                   ),
@@ -745,7 +757,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                 child: Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF121622),
+                    color: const Color(0xFFFFFFFF),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Column(
@@ -753,7 +765,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                     children: [
                       Text(
                         'Stones Rewarded',
-                        style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.5)),
+                        style: TextStyle(fontSize: 11, color: Color(0xFF1E1B18).withValues(alpha: 0.60)),
                       ),
                       const SizedBox(height: 4),
                       Text(
@@ -771,7 +783,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
             'Share your bench short links on Messenger or WhatsApp. Every EWU student you bring to the benches earns you +5 Stones.',
             style: TextStyle(
               fontSize: 11,
-              color: Colors.white.withValues(alpha: 0.55),
+              color: Color(0xFF1E1B18).withValues(alpha: 0.65),
               height: 1.35,
             ),
           ),
@@ -784,23 +796,23 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF0D111A),
+        color: const Color(0xFFFFF9F0),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+        border: Border.all(color: Color(0xFF1E1B18).withValues(alpha: 0.15)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Row(
             children: [
-              Icon(Icons.shield_outlined, color: Color(0xFF10B981), size: 16),
+              Icon(Icons.shield_outlined, color: Color(0xFF0FB881), size: 16),
               SizedBox(width: 8),
               Text(
                 'Zero-PII Privacy Protection',
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
-                  color: Colors.white,
+                  color: const Color(0xFF1E1B18),
                 ),
               ),
             ],
@@ -810,7 +822,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
             'Your conversations are end-to-end anonymized. Nicknames rotate every 15 days, and phone numbers or social links are blocked unless both students complete a mutual handshake.',
             style: TextStyle(
               fontSize: 11,
-              color: Colors.white.withValues(alpha: 0.55),
+              color: Color(0xFF1E1B18).withValues(alpha: 0.65),
               height: 1.45,
             ),
           ),

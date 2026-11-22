@@ -28,3 +28,12 @@ ios/Flutter/flutter_export_environment.sh
 *.swo
 .DS_Store
 Thumbs.db
+
+# Release Signing Secrets & Env
+**/key.properties
+**/*.jks
+**/*.keystore
+backend/.env
+frontend/.env.json
+**/.env
+**/.env.json

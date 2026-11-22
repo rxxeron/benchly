@@ -1,11 +1,11 @@
 {
-    "name": "frontend",
-    "short_name": "frontend",
+    "name": "Benchly — EWU Campus Adda",
+    "short_name": "Benchly",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#000000",
+    "theme_color": "#000000",
+    "description": "Anonymous 1-on-1 & 5-Student Cafeteria Adda for East West University.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

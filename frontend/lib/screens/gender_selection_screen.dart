@@ -48,7 +48,7 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0F1015),
+      backgroundColor: const Color(0xFFFFF9F0),
       body: MobileContainer(
         child: SafeArea(
           child: Padding(
@@ -63,7 +63,7 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
                     fontSize: 26,
                     fontWeight: FontWeight.w800,
                     letterSpacing: -0.6,
-                    color: Colors.white,
+                    color: const Color(0xFF1E1B18),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -71,7 +71,7 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
                   'Used strictly for matchmaking preferences. Never shown publicly to strangers.',
                   style: TextStyle(
                     fontSize: 14,
-                    color: Colors.white.withValues(alpha: 0.55),
+                    color: Color(0xFF1E1B18).withValues(alpha: 0.65),
                     height: 1.4,
                   ),
                 ),
@@ -80,7 +80,7 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
                   title: 'Male',
                   subtitle: 'Match as a guy',
                   icon: Icons.male_rounded,
-                  accentColor: const Color(0xFF38BDF8), // Cyan / Sky
+                  accentColor: const Color(0xFF0284C7), // Cyan / Sky
                   genderValue: 'male',
                 ),
                 const SizedBox(height: 14),
@@ -121,10 +121,10 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
         curve: Curves.easeOut,
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-          color: isSelected ? accentColor.withValues(alpha: 0.12) : const Color(0xFF181920),
+          color: isSelected ? accentColor.withValues(alpha: 0.12) : const Color(0xFFFFFFFF),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isSelected ? accentColor : Colors.white.withValues(alpha: 0.08),
+            color: isSelected ? accentColor : Color(0xFF1E1B18).withValues(alpha: 0.15),
             width: isSelected ? 1.8 : 1,
           ),
         ),
@@ -149,7 +149,7 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
                     style: const TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w700,
-                      color: Colors.white,
+                      color: const Color(0xFF1E1B18),
                     ),
                   ),
                   const SizedBox(height: 3),
@@ -157,7 +157,7 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
                     subtitle,
                     style: TextStyle(
                       fontSize: 13,
-                      color: Colors.white.withValues(alpha: 0.5),
+                      color: Color(0xFF1E1B18).withValues(alpha: 0.60),
                     ),
                   ),
                 ],
@@ -166,7 +166,7 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
             Icon(
               Icons.arrow_forward_ios_rounded,
               size: 16,
-              color: Colors.white.withValues(alpha: 0.3),
+              color: Color(0xFF1E1B18).withValues(alpha: 0.28),
             ),
           ],
         ),

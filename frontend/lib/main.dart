@@ -1,13 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'config/app_config.dart';
 import 'screens/auth_wrapper.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  try {
+    await dotenv.load(fileName: '.env');
+  } catch (_) {
+    // Prefer --dart-define / --dart-define-from-file in production builds so .env is never bundled as an asset.
+  }
   await Supabase.initialize(
-    url: 'https://pibrfwfazbuifanezovw.supabase.co',
+    url: AppConfig.supabaseUrl,
     // ignore: deprecated_member_use
-    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBpYnJmd2ZhemJ1aWZhbmV6b3Z3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA3NjM2MDcsImV4cCI6MjEwNjMzOTYwN30.H4VvZ2sXK0fqbTjz5SRW8FlmzAHuYmPQCI6G9nDWSNE',
+    anonKey: AppConfig.supabaseAnonKey,
+    authOptions: const FlutterAuthClientOptions(
+      authFlowType: AuthFlowType.pkce,
+    ),
   );
   runApp(const BenchlyApp());
 }
@@ -21,20 +31,26 @@ class BenchlyApp extends StatelessWidget {
       title: 'Benchly',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF080A0F),
-        primaryColor: const Color(0xFF10B981),
-        colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF10B981),
-          secondary: Color(0xFF6366F1),
-          surface: Color(0xFF121622),
+        brightness: Brightness.light,
+        scaffoldBackgroundColor: const Color(0xFFFFF9F0),
+        primaryColor: const Color(0xFF0FB881),
+        colorScheme: const ColorScheme.light(
+          primary: Color(0xFF0FB881),
+          secondary: Color(0xFFFF6B4A),
+          tertiary: Color(0xFFFFB800),
+          surface: Color(0xFFFFFFFF),
+          onSurface: Color(0xFF1E1B18),
         ),
         fontFamily: 'Roboto',
         appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF0F1015),
+          backgroundColor: Color(0xFFFFF9F0),
+          foregroundColor: Color(0xFF1E1B18),
           elevation: 0,
           centerTitle: false,
           scrolledUnderElevation: 0,
+        ),
+        bottomSheetTheme: const BottomSheetThemeData(
+          constraints: BoxConstraints(maxWidth: 430),
         ),
       ),
       home: const AuthWrapper(),

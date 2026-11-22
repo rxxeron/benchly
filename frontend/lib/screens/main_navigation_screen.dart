@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'home_tab_screen.dart';
 import 'student_analytics_screen.dart';
+import 'stones_rewards_screen.dart';
 import 'settings_screen.dart';
 
 class MainNavigationScreen extends StatefulWidget {
@@ -19,36 +20,37 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         final isDesktop = constraints.maxWidth > 480;
 
         Widget content = Scaffold(
-          backgroundColor: const Color(0xFF080A0F),
+          backgroundColor: const Color(0xFFFFF9F0),
           body: IndexedStack(
             index: _currentIndex,
-            children: [
-              const HomeTabScreen(),
-              const StudentAnalyticsScreen(),
-              _buildPlaceholderScreen('Stones & Rewards', Icons.diamond_outlined),
-              const SettingsScreen(),
+            children: const [
+              HomeTabScreen(),
+              StudentAnalyticsScreen(),
+              StonesRewardsScreen(),
+              SettingsScreen(),
             ],
           ),
           bottomNavigationBar: Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFF0B0E17),
+            decoration: const BoxDecoration(
+              color: Color(0xFFFFFFFF),
               border: Border(
                 top: BorderSide(
-                  color: Colors.white.withValues(alpha: 0.05),
-                  width: 1,
+                  color: Color(0xFF1E1B18),
+                  width: 2,
                 ),
               ),
             ),
             child: BottomNavigationBar(
               currentIndex: _currentIndex,
               onTap: (i) => setState(() => _currentIndex = i),
-              backgroundColor: const Color(0xFF0B0E17),
+              backgroundColor: const Color(0xFFFFFFFF),
               elevation: 0,
               type: BottomNavigationBarType.fixed,
-              selectedItemColor: const Color(0xFF10B981), // Emerald
-              unselectedItemColor: Colors.white.withValues(alpha: 0.35),
-              selectedFontSize: 11,
+              selectedItemColor: const Color(0xFF0FB881), // Campus Mint
+              unselectedItemColor: const Color(0xFF575049),
+              selectedFontSize: 11.5,
               unselectedFontSize: 11,
+              selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w700),
               showSelectedLabels: true,
               showUnselectedLabels: true,
               items: const [
@@ -79,25 +81,26 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
         if (!isDesktop) return content;
 
-        // Desktop framed layout
+        // Desktop sunlit framed layout
         return Scaffold(
-          backgroundColor: const Color(0xFF04060A),
+          backgroundColor: const Color(0xFFFFF2DF),
           body: Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 430),
               child: Container(
                 decoration: BoxDecoration(
-                  color: const Color(0xFF080A0F),
-                  border: Border.symmetric(
+                  color: const Color(0xFFFFF9F0),
+                  border: const Border.symmetric(
                     vertical: BorderSide(
-                      color: Colors.white.withValues(alpha: 0.08),
+                      color: Color(0xFF1E1B18),
+                      width: 2,
                     ),
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.8),
-                      blurRadius: 36,
-                      spreadRadius: 2,
+                      color: const Color(0xFF1E1B18).withValues(alpha: 0.14),
+                      blurRadius: 28,
+                      offset: const Offset(0, 8),
                     ),
                   ],
                 ),
@@ -107,42 +110,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           ),
         );
       },
-    );
-  }
-
-  Widget _buildPlaceholderScreen(String title, IconData icon) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            width: 56,
-            height: 56,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.04),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Icon(icon, size: 28, color: const Color(0xFFF59E0B)),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Coming soon in the next stones update',
-            style: TextStyle(
-              fontSize: 13,
-              color: Colors.white.withValues(alpha: 0.4),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

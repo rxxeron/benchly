@@ -1,0 +1,45 @@
+name: Backend Server CI & Deploy
+
+on:
+  push:
+    branches: [backend, main]
+    paths:
+      - 'backend/**'
+      - 'docker-compose.yml'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install & Build Backend
+        working-directory: backend
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npm run build
+
+      - name: Deploy to VM via SSH (when VM secrets are configured)
+        if: ${{ secrets.VM_HOST != '' && secrets.VM_USER != '' && secrets.VM_SSH_KEY != '' }}
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            cd ~/benchly
+            git fetch origin
+            git checkout backend || git checkout main
+            git pull origin $(git rev-parse --abbrev-ref HEAD)
+            docker compose up -d --build

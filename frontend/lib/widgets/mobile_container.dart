@@ -11,14 +11,14 @@ class MobileContainer extends StatelessWidget {
         // If screen is mobile-sized, fill completely
         if (constraints.maxWidth <= 480) {
           return Container(
-            color: const Color(0xFF0F1015),
+            color: const Color(0xFFFFF9F0),
             child: child,
           );
         }
 
         // On desktop web, frame it cleanly with subtle elevation
         return Container(
-          color: const Color(0xFF07070A), // Ambient outer darkness
+          color: const Color(0xFFFFF2DF), // Ambient outer darkness
           child: Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 430),
@@ -26,10 +26,10 @@ class MobileContainer extends StatelessWidget {
                 width: double.infinity,
                 height: double.infinity,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF0F1015),
+                  color: const Color(0xFFFFF9F0),
                   border: Border.symmetric(
                     vertical: BorderSide(
-                      color: Colors.white.withValues(alpha: 0.08),
+                      color: Color(0xFF1E1B18).withValues(alpha: 0.15),
                       width: 1,
                     ),
                   ),

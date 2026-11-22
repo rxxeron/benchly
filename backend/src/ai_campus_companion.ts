@@ -1,0 +1,217 @@
+/**
+ * Benchly AI Campus Companion (Gemma 4 12B over Ollama Cluster)
+ * Automatically pairs a waiting EWU student when no real classmate is available
+ * in the queue, conversing naturally in Bangla, English, and Banglish like a
+ * real East West University student.
+ *
+ * Supports automatic round-robin + failover across:
+ *   labpc, labpc25, labpc26, labpc31 (or custom OLLAMA_HOSTS in .env)
+ */
+
+import { generateServerNickname } from './nickname_engine';
+
+export interface AiChatMessage {
+    role: 'system' | 'user' | 'assistant';
+    content: string;
+}
+
+export interface AiRoomSession {
+    roomId: string;
+    aiUserId: string;
+    aiAlias: string;
+    aiDept: string;
+    aiSemester: string;
+    icebreaker: string;
+    history: AiChatMessage[];
+    isGenerating: boolean;
+}
+
+const DEFAULT_OLLAMA_HOSTS = [
+    'https://labpc1.benchly.live',
+    'https://labpc25.benchly.live',
+    'https://labpc26.benchly.live',
+    'https://labpc31.benchly.live',
+    'http://100.110.58.116:11434',
+    'http://127.0.0.1:11434'
+];
+
+const EWU_DEPTS = ['CSE', 'BBA', 'EEE', 'Pharmacy', 'English', 'Economics', 'Law'];
+const EWU_SEMESTERS = ['3rd Sem', '4th Sem', '5th Sem', '6th Sem', '7th Sem', '8th Sem'];
+const EWU_VIBES = [
+    'just finished a long lab and craving Aftabnagar main gate cha',
+    'chilling on the ground floor bench between classes',
+    'hiding on Library Floor 4 pretending to study for midterms',
+    'debating whether to get main gate fuchka or cafeteria khichuri',
+    'surviving an 8:30 AM class on zero sleep'
+];
+
+export class AiCampusCompanionEngine {
+    private static hosts: string[] = (() => {
+        const raw = (process.env.OLLAMA_HOSTS || '').trim();
+        if (!raw) return DEFAULT_OLLAMA_HOSTS;
+        return raw
+            .split(',')
+            .map((h) => {
+                const t = h.trim().replace(/\/+$/, '');
+                if (!t) return '';
+                if (t.startsWith('http://') || t.startsWith('https://')) return t;
+                return t.includes(':') ? `http://${t}` : `http://${t}:11434`;
+            })
+            .filter(Boolean);
+    })();
+
+    private static modelName: string = (process.env.AI_BENCH_MODEL || 'gemma4:12b').trim();
+    private static rrIndex = 0;
+
+    static createSession(roomId: string, icebreaker: string, matchMode: string): AiRoomSession {
+        const aiAlias = generateServerNickname();
+        const aiDept = EWU_DEPTS[Math.floor(Math.random() * EWU_DEPTS.length)];
+        const aiSemester = EWU_SEMESTERS[Math.floor(Math.random() * EWU_SEMESTERS.length)];
+        const vibe = EWU_VIBES[Math.floor(Math.random() * EWU_VIBES.length)];
+
+        const systemPrompt = [
+            `You are "${aiAlias}", a friendly, witty university student at East West University (EWU) in Aftabnagar, Dhaka (${aiDept}, ${aiSemester}).`,
+            `Right now you are ${vibe}. You are chatting anonymously 1-on-1 with a classmate on Benchly (mode: ${matchMode}).`,
+            `The room's icebreaker prompt is: "${icebreaker}".`,
+            `CRITICAL STYLE RULES:`,
+            `1. Match the user's language naturally: if they write in Bangla (বাংলা), reply in casual natural Dhaka Bangla; if they write in Banglish (Romanized Bangla like "ki obostha", "bhai", "exam kemon"), reply in natural EWU Banglish; if they write in English, reply in casual friendly student English (light Dhaka slang like "bhai", "yaar", "adda", "cha" is fine).`,
+            `2. Keep every reply SHORT like a real chat message: 1 to 2 sentences max (under 35 words). Never write essays or bullet lists.`,
+            `3. Sound 100% like a genuine uni student — curious, relaxed, relatable, occasionally funny. Ask natural follow-up questions.`,
+            `4. NEVER mention being an AI, LLM, bot, or Gemma. Never reveal fake phone numbers, emails, or social handles.`,
+            `5. You know EWU Aftabnagar campus life: main gate tong-er cha, fuchka, ground floor benches, Library Floor 4, cafeteria, CSE/BBA/EEE midterms, and 8:30 AM classes.`
+        ].join('\n');
+
+        return {
+            roomId,
+            aiUserId: `ai_student_${roomId.slice(0, 8)}`,
+            aiAlias,
+            aiDept,
+            aiSemester,
+            icebreaker,
+            history: [{ role: 'system', content: systemPrompt }],
+            isGenerating: false
+        };
+    }
+
+    static async generateOpeningLine(session: AiRoomSession): Promise<string> {
+        const prompt =
+            'Send a super short, casual first message (under 15 words) to break the ice with your EWU classmate on Benchly. You can mix light English/Banglish naturally.';
+        return this.callOllamaWithFailover([...session.history, { role: 'user', content: prompt }], 'hey');
+    }
+
+    static async generateReply(session: AiRoomSession, userMessage: string): Promise<string> {
+        session.history.push({ role: 'user', content: userMessage });
+        // Keep context window compact (system + last 16 turns) for fast 12B responses
+        if (session.history.length > 17) {
+            session.history = [session.history[0], ...session.history.slice(-16)];
+        }
+        const reply = await this.callOllamaWithFailover(session.history, userMessage);
+        session.history.push({ role: 'assistant', content: reply });
+        return reply;
+    }
+
+    private static async callOllamaWithFailover(
+        messages: AiChatMessage[],
+        lastUserText: string
+    ): Promise<string> {
+        const total = this.hosts.length;
+        const startIdx = this.rrIndex % total;
+        this.rrIndex = (this.rrIndex + 1) % total;
+
+        for (let attempt = 0; attempt < total; attempt++) {
+            const host = this.hosts[(startIdx + attempt) % total];
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 18000);
+            try {
+                const res = await fetch(`${host}/api/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    signal: controller.signal,
+                    body: JSON.stringify({
+                        model: this.modelName,
+                        messages,
+                        stream: false,
+                        options: {
+                            temperature: 0.85,
+                            top_p: 0.9,
+                            num_predict: 90
+                        }
+                    })
+                });
+                clearTimeout(timer);
+                if (res.status === 404) {
+                    // Fallback to any installed chat model on this live host if gemma4:12b isn't pulled yet
+                    try {
+                        const tagsRes = await fetch(`${host}/api/tags`);
+                        if (tagsRes.ok) {
+                            const tagsData: any = await tagsRes.json();
+                            const available: string[] = (tagsData?.models || []).map((m: any) => String(m.name || '')).filter(Boolean);
+                            const altModel =
+                                available.find((m) => m.toLowerCase().includes('gemma')) ||
+                                available.find((m) => !m.toLowerCase().includes('embed')) ||
+                                available[0];
+                            if (altModel && altModel !== this.modelName) {
+                                const retry = await fetch(`${host}/api/chat`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        model: altModel,
+                                        messages,
+                                        stream: false,
+                                        options: { temperature: 0.85, top_p: 0.9, num_predict: 90 }
+                                    })
+                                });
+                                if (retry.ok) {
+                                    const rData: any = await retry.json();
+                                    const rContent = (rData?.message?.content || '').toString().trim();
+                                    if (rContent) return rContent.replace(/^["']|["']$/g, '').slice(0, 320);
+                                }
+                            }
+                        }
+                    } catch {}
+                    continue;
+                }
+                if (!res.ok) continue;
+                const data: any = await res.json();
+                const content = (data?.message?.content || '').toString().trim();
+                if (content) {
+                    return content.replace(/^["']|["']$/g, '').slice(0, 320);
+                }
+            } catch {
+                clearTimeout(timer);
+            }
+        }
+
+        // Graceful fallback if all labpc Ollama nodes are temporarily unreachable
+        return this.fallbackStudentReply(lastUserText);
+    }
+
+    private static fallbackStudentReply(userText: string): string {
+        const hasBanglaScript = /[\u0980-\u09FF]/.test(userText);
+        if (hasBanglaScript) {
+            const bn = [
+                'হা হা একদম ঠিক বলসো! তোমার কোন ডিপার্টমেন্ট?',
+                'আরেহ ভাই, আজকে ক্যাম্পাসে চা খেতে গেসিলা নাকি লাইব্রেরিতে?',
+                'মিডটার্মের চাপে তো অবস্থা খারাপ 😅 তোমার ক্লাস শেষ আজকে?'
+            ];
+            return bn[Math.floor(Math.random() * bn.length)];
+        }
+        const isBanglish = /\b(ki|kemon|bhai|bro|arre|obostha|kothay|tumi|ami|bhalo|valo|accho|korso|cha|adda)\b/i.test(
+            userText
+        );
+        if (isBanglish) {
+            const bng = [
+                'arre bhai ekdom mood off, main gate er cha khaitesi haha. tomar ki obostha?',
+                'haha true! btw tumi kon dept er? midterm prep kemon cholse?',
+                'ki bolbo yaar, 8:30 er class kore ghum dhorse 😅 tomar ajke class shesh?'
+            ];
+            return bng[Math.floor(Math.random() * bng.length)];
+        }
+        const en = [
+            'haha honestly same, campus feels extra busy today. what dept are you in?',
+            'no way, I was literally just thinking about grabbing cha from the main gate 😅 how is your semester going?',
+            'fair enough! surviving midterms or actually chilling between classes right now?'
+        ];
+        return en[Math.floor(Math.random() * en.length)];
+    }
+}

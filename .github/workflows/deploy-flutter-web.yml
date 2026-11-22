@@ -1,0 +1,75 @@
+name: Flutter Web & Landing CI & Deploy (benchly.live + app.benchly.live)
+
+on:
+  push:
+    branches: [flutter-web, main]
+    paths:
+      - 'frontend/**'
+      - 'landing-web/**'
+      - '.github/workflows/deploy-flutter-web.yml'
+  workflow_dispatch:
+
+jobs:
+  build-landing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: landing-web/package-lock.json
+
+      - name: Build Landing Page (benchly.live)
+        working-directory: landing-web
+        env:
+          VITE_APP_URL: https://app.benchly.live
+          VITE_API_URL: https://api.benchly.live
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchly-landing-dist
+          path: landing-web/dist
+
+      - name: Deploy Landing to Cloudflare Pages (benchly.live)
+        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy landing-web/dist --project-name=benchly-landing --branch=flutter-web
+
+  build-flutter-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Build Flutter Web Release (app.benchly.live)
+        working-directory: frontend
+        run: |
+          flutter pub get
+          flutter build web --release --no-web-resources-cdn \
+            --dart-define=SUPABASE_URL=${{ secrets.SUPABASE_URL }} \
+            --dart-define=SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }} \
+            --dart-define=GOOGLE_WEB_CLIENT_ID=${{ secrets.GOOGLE_WEB_CLIENT_ID }} \
+            --dart-define=SOCKET_URL=https://api.benchly.live
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchly-flutter-web-dist
+          path: frontend/build/web
+
+      - name: Deploy Flutter Web to Cloudflare Pages (app.benchly.live)
+        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy frontend/build/web --project-name=benchly-app --branch=flutter-web
