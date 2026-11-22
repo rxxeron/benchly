@@ -157,10 +157,12 @@ export class CanonicalHuffmanCodec {
     }
 
     static compressTranscriptJson(rawJson: string): CompressedTranscriptMeta {
-        const input = rawJson || '[]';
+        const input = (rawJson || '[]').replace(/\u0000/g, '');
+        // Iterate by full Unicode code points (prevents splitting emoji UTF-16 surrogate pairs
+        // into lone surrogates that PostgreSQL JSONB rejects as invalid JSON).
+        const chars = Array.from(input);
         const freq: Record<string, number> = {};
-        for (let i = 0; i < input.length; i++) {
-            const ch = input[i];
+        for (const ch of chars) {
             freq[ch] = (freq[ch] || 0) + 1;
         }
 
@@ -237,8 +239,8 @@ export class CanonicalHuffmanCodec {
 
         // Pack bitstream into bytes
         const bitChunks: string[] = [];
-        for (let i = 0; i < input.length; i++) {
-            bitChunks.push(canonicalCodes[input[i]]);
+        for (const ch of chars) {
+            bitChunks.push(canonicalCodes[ch]);
         }
         const bitString = bitChunks.join('');
         const byteLen = Math.ceil(bitString.length / 8);
@@ -250,7 +252,7 @@ export class CanonicalHuffmanCodec {
             }
         }
 
-        const n = input.length;
+        const n = chars.length;
         let entropy = 0;
         let avgLen = 0;
         for (const sym of symbols) {
@@ -266,7 +268,7 @@ export class CanonicalHuffmanCodec {
             : 0;
 
         return {
-            originalLength: input.length,
+            originalLength: chars.length,
             originalBytes,
             compressedBytes,
             savingsPercent: Math.max(0, savingsPercent),
