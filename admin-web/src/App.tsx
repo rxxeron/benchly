@@ -3,18 +3,21 @@ import {
   Activity,
   Binary,
   Cpu,
+  Download,
   Gift,
   Lock,
   LogOut,
   RefreshCw,
+  Server,
   ShieldAlert,
   Sparkles,
+  TrendingUp,
   Users
 } from 'lucide-react';
 import { AdminApi, AdminAuth, supabase } from './api';
 import { HuffmanTreeView } from './components/HuffmanTreeView';
 
-type TabKey = 'overview' | 'rooms' | 'content' | 'algorithms' | 'moderation';
+type TabKey = 'overview' | 'growth' | 'rooms' | 'content' | 'algorithms' | 'moderation' | 'system';
 
 export default function App() {
   const [auth, setAuth] = useState<AdminAuth | null>(null);
@@ -34,12 +37,21 @@ export default function App() {
   const [passwordSetupMsg, setPasswordSetupMsg] = useState('');
 
   // Data state
+  const [autoRefresh, setAutoRefresh] = useState(false);
   const [overview, setOverview] = useState<any>(null);
+  const [growth, setGrowth] = useState<any>(null);
+  const [growthDays, setGrowthDays] = useState<number>(14);
+  const [systemHealth, setSystemHealth] = useState<any>(null);
   const [rooms, setRooms] = useState<any[]>([]);
+  const [roomFilter, setRoomFilter] = useState<'all' | 'human' | 'ai' | 'encrypted'>('all');
+  const [roomSearch, setRoomSearch] = useState('');
   const [selectedRoom, setSelectedRoom] = useState<any>(null);
   const [reports, setReports] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [selectedUserProfile, setSelectedUserProfile] = useState<any>(null);
+  const [earlyBirdAvatars, setEarlyBirdAvatars] = useState<any[]>([]);
+  const [totalStonesInCirculation, setTotalStonesInCirculation] = useState<number>(0);
 
   function formatDuration(totalSec: number): string {
     const s = Math.max(0, Math.round(totalSec || 0));
@@ -90,12 +102,14 @@ export default function App() {
     return () => listener.subscription.unsubscribe();
   }, []);
 
-  async function loadCurrentTab(currentAuth: AdminAuth, targetTab: TabKey) {
+  async function loadCurrentTab(currentAuth: AdminAuth, targetTab: TabKey, overrideDays?: number) {
     setLoading(true);
     setError('');
     try {
       if (targetTab === 'overview') {
         setOverview(await AdminApi.getOverview(currentAuth));
+      } else if (targetTab === 'growth') {
+        setGrowth(await AdminApi.getGrowth(currentAuth, overrideDays ?? growthDays));
       } else if (targetTab === 'rooms') {
         const res = await AdminApi.getRooms(currentAuth, 50);
         setRooms(res.rooms || []);
@@ -103,17 +117,23 @@ export default function App() {
         const res = await AdminApi.getContent(currentAuth);
         setTopicDraft(res.todaysBenchTopic || '');
         setCampaigns(res.campaigns || []);
+        setEarlyBirdAvatars(res.earlyBirdAvatars || []);
+        setTotalStonesInCirculation(Number(res.totalStonesInCirculation || 0));
       } else if (targetTab === 'algorithms') {
         setWorkflows(
           await AdminApi.getAlgorithmWorkflows(currentAuth, walletStones, targetStones, sampleMsg)
         );
       } else if (targetTab === 'moderation') {
-        const [repRes, usrRes] = await Promise.all([
+        const [repRes, usrRes, audRes] = await Promise.all([
           AdminApi.getReports(currentAuth),
-          AdminApi.getUsers(currentAuth)
+          AdminApi.getUsers(currentAuth),
+          AdminApi.getAuditLogs(currentAuth, 50)
         ]);
         setReports(repRes.reports || []);
         setUsers(usrRes.users || []);
+        setAuditLogs(audRes.logs || []);
+      } else if (targetTab === 'system') {
+        setSystemHealth(await AdminApi.getSystemHealth(currentAuth));
       }
     } catch (e: any) {
       setError(e.message || 'Failed to load data');
@@ -127,6 +147,44 @@ export default function App() {
       loadCurrentTab(auth, tab);
     }
   }, [auth, tab]);
+
+  useEffect(() => {
+    if (!auth || !autoRefresh) return;
+    const id = window.setInterval(() => {
+      loadCurrentTab(auth, tab);
+    }, 15000);
+    return () => window.clearInterval(id);
+  }, [auth, autoRefresh, tab, growthDays]);
+
+  async function handleExportJson() {
+    if (!auth) return;
+    setLoading(true);
+    setError('');
+    try {
+      const [ov, gr, sh] = await Promise.all([
+        overview ? Promise.resolve(overview) : AdminApi.getOverview(auth),
+        growth ? Promise.resolve(growth) : AdminApi.getGrowth(auth, growthDays),
+        systemHealth ? Promise.resolve(systemHealth) : AdminApi.getSystemHealth(auth)
+      ]);
+      const snapshot = {
+        exportedAt: new Date().toISOString(),
+        overview: ov,
+        growth: gr,
+        systemHealth: sh
+      };
+      const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `benchly-metrics-${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setError(e.message || 'Failed to export metrics');
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function handleInspectRoom(roomId: string) {
     if (!auth) return;
@@ -310,6 +368,9 @@ export default function App() {
         <button className={`nav-btn ${tab === 'overview' ? 'active' : ''}`} onClick={() => setTab('overview')}>
           <Activity size={16} /> Overview
         </button>
+        <button className={`nav-btn ${tab === 'growth' ? 'active' : ''}`} onClick={() => setTab('growth')}>
+          <TrendingUp size={16} /> Growth & Traffic
+        </button>
         <button className={`nav-btn ${tab === 'rooms' ? 'active' : ''}`} onClick={() => setTab('rooms')}>
           <Binary size={16} /> Chats & Huffman Trees
         </button>
@@ -321,6 +382,9 @@ export default function App() {
         </button>
         <button className={`nav-btn ${tab === 'moderation' ? 'active' : ''}`} onClick={() => setTab('moderation')}>
           <ShieldAlert size={16} /> Reports & Users
+        </button>
+        <button className={`nav-btn ${tab === 'system' ? 'active' : ''}`} onClick={() => setTab('system')}>
+          <Server size={16} /> System Health
         </button>
 
         <div style={{ marginTop: 'auto', paddingTop: 12, borderTop: '1px solid rgba(30,27,24,0.12)' }}>
@@ -334,18 +398,34 @@ export default function App() {
       </aside>
 
       <main className="main">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18, flexWrap: 'wrap', gap: 10 }}>
           <h2 style={{ margin: 0, fontSize: 20 }}>
             {tab === 'overview' && 'Live Campus Overview'}
+            {tab === 'growth' && 'Website Traffic, Funnel & Retention'}
             {tab === 'rooms' && 'Encrypted Chat Archives & Canonical Huffman Trees'}
-            {tab === 'content' && 'Dynamic Bench Topic & Custom Reward Campaigns'}
+            {tab === 'content' && 'Dynamic Bench Topic, Economy & Reward Campaigns'}
             {tab === 'algorithms' && 'CSE246 Live Algorithm Workflows'}
-            {tab === 'moderation' && 'Abuse Reports & User Moderation'}
+            {tab === 'moderation' && 'Abuse Reports, Moderation & Audit Log'}
+            {tab === 'system' && 'System Health, AI Cluster & Free-Tier Guardrails'}
           </h2>
-          <button className="btn" onClick={() => loadCurrentTab(auth, tab)} disabled={loading}>
-            <RefreshCw size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />
-            {loading ? 'Loading...' : 'Refresh'}
-          </button>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <button
+              className={`btn ${autoRefresh ? 'primary' : ''}`}
+              type="button"
+              onClick={() => setAutoRefresh((v) => !v)}
+              title="Automatically refresh current tab every 15 seconds"
+            >
+              {autoRefresh ? '● Live 15s ON' : 'Live 15s: OFF'}
+            </button>
+            <button className="btn" type="button" onClick={handleExportJson} disabled={loading}>
+              <Download size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+              Export JSON
+            </button>
+            <button className="btn" onClick={() => loadCurrentTab(auth, tab)} disabled={loading}>
+              <RefreshCw size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+              {loading ? 'Loading...' : 'Refresh'}
+            </button>
+          </div>
         </div>
 
         {error && <div className="badge rose" style={{ marginBottom: 16 }}>{error}</div>}
@@ -403,9 +483,45 @@ export default function App() {
                 <div className="stat-val">{overview.totals?.users ?? 0}</div>
               </div>
               <div className="card">
+                <div className="stat-label">Web & App Visits Today</div>
+                <div className="stat-val" style={{ color: '#ff6b4a' }}>
+                  {overview.visitsToday ?? 0}
+                </div>
+              </div>
+              <div className="card">
                 <div className="stat-label">Avg Huffman Savings</div>
                 <div className="stat-val" style={{ color: '#2563eb' }}>
                   {overview.totals?.avgHuffmanSavingsPct ?? 0}%
+                </div>
+              </div>
+            </div>
+
+            <div className="grid-4">
+              <div className="card">
+                <div className="stat-label">Human Match Ratio</div>
+                <div className="stat-val" style={{ color: '#047857' }}>
+                  {overview.chatQuality?.humanMatchPct ?? 0}%
+                </div>
+                <div style={{ fontSize: 12, color: '#575049', marginTop: 4 }}>
+                  AI Fallback: {overview.chatQuality?.aiFallbackPct ?? 0}% ({overview.chatQuality?.humanRooms ?? 0}H / {overview.chatQuality?.aiRooms ?? 0}AI)
+                </div>
+              </div>
+              <div className="card">
+                <div className="stat-label">Early-Drop Rate (&lt;30s)</div>
+                <div className="stat-val" style={{ color: '#e11d48' }}>
+                  {overview.chatQuality?.earlyDropRatePct ?? 0}%
+                </div>
+                <div style={{ fontSize: 12, color: '#575049', marginTop: 4 }}>
+                  Median length: {formatDuration(overview.chatQuality?.medianDurationSec ?? 0)}
+                </div>
+              </div>
+              <div className="card">
+                <div className="stat-label">Mutual Extension Rate</div>
+                <div className="stat-val" style={{ color: '#2563eb' }}>
+                  {overview.chatQuality?.mutualExtensionRatePct ?? 0}%
+                </div>
+                <div style={{ fontSize: 12, color: '#575049', marginTop: 4 }}>
+                  Avg {overview.chatQuality?.avgMessagesPerRoom ?? 0} msgs / room
                 </div>
               </div>
               <div className="card">
@@ -434,7 +550,7 @@ export default function App() {
                   <tbody>
                     <tr><td>RSS Memory</td><td className="mono">{overview.liveStats?.systemHealth?.rssMemoryMb ?? 0} MB</td></tr>
                     <tr><td>Heap Used</td><td className="mono">{overview.liveStats?.systemHealth?.heapUsedMb ?? 0} MB</td></tr>
-                    <tr><td>Uptime</td><td className="mono">{overview.liveStats?.systemHealth?.uptimeSeconds ?? 0} s</td></tr>
+                    <tr><td>Uptime</td><td className="mono">{formatDuration(overview.liveStats?.systemHealth?.uptimeSeconds ?? 0)}</td></tr>
                     <tr><td>Node Version</td><td className="mono">{overview.liveStats?.systemHealth?.nodeVersion ?? '-'}</td></tr>
                   </tbody>
                 </table>
@@ -443,17 +559,220 @@ export default function App() {
           </>
         )}
 
+        {/* TAB 1.5: GROWTH & TRAFFIC */}
+        {tab === 'growth' && growth && (
+          <div style={{ display: 'grid', gap: 16 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: '#575049' }}>Window:</span>
+              {[7, 14, 30].map((d) => (
+                <button
+                  key={d}
+                  className={`btn ${growthDays === d ? 'primary' : ''}`}
+                  onClick={() => {
+                    setGrowthDays(d);
+                    loadCurrentTab(auth, 'growth', d);
+                  }}
+                >
+                  Last {d} Days
+                </button>
+              ))}
+            </div>
+
+            <div className="grid-4" style={{ marginBottom: 0 }}>
+              <div className="card">
+                <div className="stat-label">Unique Visitors (24h / 7d / 30d)</div>
+                <div className="stat-val" style={{ color: '#047857', fontSize: 22 }}>
+                  {growth.visitors?.unique24h ?? 0} / {growth.visitors?.unique7d ?? 0} / {growth.visitors?.unique30d ?? 0}
+                </div>
+                <div style={{ fontSize: 12, color: '#575049', marginTop: 4 }}>
+                  Pageviews (7d / 30d): {growth.visitors?.pageviews7d ?? 0} / {growth.visitors?.pageviews30d ?? 0}
+                </div>
+              </div>
+              <div className="card">
+                <div className="stat-label">DAU / WAU / MAU</div>
+                <div className="stat-val" style={{ fontSize: 22 }}>
+                  {growth.retention?.dau ?? 0} / {growth.retention?.wau ?? 0} / {growth.retention?.mau ?? 0}
+                </div>
+                <div style={{ fontSize: 12, color: '#575049', marginTop: 4 }}>
+                  Stickiness (DAU/MAU): {growth.retention?.stickinessPct ?? 0}%
+                </div>
+              </div>
+              <div className="card">
+                <div className="stat-label">Cohort Retention</div>
+                <div className="stat-val" style={{ color: '#2563eb', fontSize: 22 }}>
+                  D1 {growth.retention?.d1RetentionPct ?? 0}% • D7 {growth.retention?.d7RetentionPct ?? 0}%
+                </div>
+                <div style={{ fontSize: 12, color: '#575049', marginTop: 4 }}>
+                  Human Match: {growth.chatQuality?.humanMatchPct ?? 0}% • AI: {growth.chatQuality?.aiFallbackPct ?? 0}%
+                </div>
+              </div>
+              <div className="card">
+                <div className="stat-label">Platform Split</div>
+                <div className="stat-val" style={{ color: '#d97706', fontSize: 22 }}>
+                  Web {growth.platforms?.web ?? 0} • App {growth.platforms?.android ?? 0}
+                </div>
+                <div style={{ fontSize: 12, color: '#575049', marginTop: 4 }}>
+                  Mobile Web: {growth.platforms?.mobileWeb ?? 0} • Desktop: {growth.platforms?.desktopWeb ?? 0}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid-2">
+              <div className="card">
+                <h3>Acquisition &amp; Activation Funnel</h3>
+                <div style={{ display: 'grid', gap: 10 }}>
+                  {[
+                    { label: '1. Landing Page Visits (benchly.live)', value: growth.funnel?.landingViews ?? 0, color: '#0fb881' },
+                    { label: '2. "Open App" CTA Clicks', value: growth.funnel?.ctaClicks ?? 0, color: '#2563eb' },
+                    { label: '3. App Opens (app.benchly.live / APK)', value: growth.funnel?.appOpens ?? 0, color: '#d97706' },
+                    { label: '4. Verified @std.ewubd.edu Students', value: growth.funnel?.verifiedStudents ?? 0, color: '#ff6b4a' },
+                    { label: '5. Students Matched into Chats', value: growth.funnel?.matchedStudents ?? 0, color: '#047857' },
+                    { label: '6. Completed Archived Chats', value: growth.funnel?.completedChats ?? 0, color: '#7c3aed' }
+                  ].map((step) => {
+                    const maxFunnel = Math.max(
+                      1,
+                      growth.funnel?.landingViews || 0,
+                      growth.funnel?.verifiedStudents || 0,
+                      growth.funnel?.completedChats || 0
+                    );
+                    const pct = Math.min(100, Math.round((step.value / maxFunnel) * 100));
+                    return (
+                      <div key={step.label}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
+                          <span>{step.label}</span>
+                          <strong className="mono">{step.value}</strong>
+                        </div>
+                        <div style={{ height: 10, background: '#fff4e4', borderRadius: 999, border: '1px solid #1e1b18', overflow: 'hidden' }}>
+                          <div style={{ width: `${pct}%`, height: '100%', background: step.color }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="card">
+                <h3>Campus Peak Hours (BDT UTC+6)</h3>
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 170, paddingTop: 12 }}>
+                  {(growth.hourlyBdt || []).map((b: any) => {
+                    const maxHr = Math.max(1, ...(growth.hourlyBdt || []).map((x: any) => Number(x.count || 0)));
+                    const hPct = Math.round((Number(b.count || 0) / maxHr) * 100);
+                    return (
+                      <div
+                        key={b.hour}
+                        title={`${b.label} BDT: ${b.count} events`}
+                        style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', justifyContent: 'flex-end' }}
+                      >
+                        <div
+                          style={{
+                            width: '100%',
+                            height: `${Math.max(4, hPct)}%`,
+                            background: hPct > 65 ? '#ff6b4a' : '#0fb881',
+                            border: '1px solid #1e1b18',
+                            borderRadius: '4px 4px 0 0'
+                          }}
+                        />
+                        <div className="mono" style={{ fontSize: 9, color: '#575049', marginTop: 4 }}>
+                          {b.hour % 3 === 0 ? String(b.hour).padStart(2, '0') : ''}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid-2">
+              <div className="card">
+                <h3>Department Breakdown</h3>
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {(growth.departments || []).map((d: any) => {
+                    const maxD = Math.max(1, ...(growth.departments || []).map((x: any) => Number(x.count || 0)));
+                    const pct = Math.round((Number(d.count || 0) / maxD) * 100);
+                    return (
+                      <div key={d.dept}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 3 }}>
+                          <span>{d.dept}</span>
+                          <span className="mono">{d.count} students</span>
+                        </div>
+                        <div style={{ height: 8, background: '#fff4e4', borderRadius: 999, border: '1px solid rgba(30,27,24,0.35)', overflow: 'hidden' }}>
+                          <div style={{ width: `${pct}%`, height: '100%', background: '#2563eb' }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {(growth.departments || []).length === 0 && (
+                    <div style={{ color: '#575049', fontSize: 13 }}>No department data yet.</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="card">
+                <h3>Top Referrers &amp; Invite Links (/b/:code)</h3>
+                <table>
+                  <thead>
+                    <tr><th>Source / Invite</th><th>Clicks / Visits</th></tr>
+                  </thead>
+                  <tbody>
+                    {(growth.topReferrers || []).map((r: any) => (
+                      <tr key={`ref_${r.source}`}>
+                        <td>{r.source}</td>
+                        <td className="mono">{r.count}</td>
+                      </tr>
+                    ))}
+                    {(growth.topInvites || []).map((inv: any) => (
+                      <tr key={`inv_${inv.code}`}>
+                        <td className="mono">/b/{inv.code}</td>
+                        <td className="mono" style={{ color: '#047857' }}>{inv.clicks}</td>
+                      </tr>
+                    ))}
+                    {(growth.topReferrers || []).length === 0 && (growth.topInvites || []).length === 0 && (
+                      <tr><td colSpan={2} style={{ color: '#575049' }}>Traffic beacons will populate here as visitors arrive.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* TAB 2: CHATS & HUFFMAN TREES */}
         {tab === 'rooms' && (
           <div style={{ display: 'grid', gap: 16 }}>
             <div className="card">
-              <h3>Archived Rooms ({rooms.length})</h3>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
+                <h3 style={{ margin: 0 }}>Archived Rooms ({rooms.length})</h3>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                  {([
+                    { key: 'all', label: 'All' },
+                    { key: 'human', label: 'Human' },
+                    { key: 'ai', label: 'AI Companion' },
+                    { key: 'encrypted', label: 'Encrypted' }
+                  ] as const).map((f) => (
+                    <button
+                      key={f.key}
+                      className={`btn ${roomFilter === f.key ? 'primary' : ''}`}
+                      onClick={() => setRoomFilter(f.key)}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                  <input
+                    className="input"
+                    value={roomSearch}
+                    onChange={(e) => setRoomSearch(e.target.value)}
+                    placeholder="Search room ID or alias..."
+                    style={{ width: 200 }}
+                  />
+                </div>
+              </div>
               <div style={{ overflowX: 'auto' }}>
                 <table>
                   <thead>
                     <tr>
                       <th>Room</th>
                       <th>Participants</th>
+                      <th>Match</th>
                       <th>Msgs</th>
                       <th>Savings</th>
                       <th>H(X) / L̄</th>
@@ -462,29 +781,46 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {rooms.map((r) => (
-                      <tr key={r.roomId}>
-                        <td className="mono">{String(r.roomId).slice(0, 8)}...</td>
-                        <td>{r.user1Alias} × {r.user2Alias}</td>
-                        <td className="mono">{r.messagesCount}</td>
-                        <td className="mono" style={{ color: '#047857' }}>{r.compressionSavingsPct}%</td>
-                        <td className="mono">
-                          {r.shannonEntropy ?? '-'} / {r.averageCodeLength ?? '-'}
-                        </td>
-                        <td>
-                          <span className={`badge ${r.encrypted ? 'emerald' : 'amber'}`}>
-                            <Lock size={11} /> {r.encrypted ? 'AES-256-GCM' : 'Legacy'}
-                          </span>
-                        </td>
-                        <td>
-                          <button className="btn primary" onClick={() => handleInspectRoom(r.roomId)}>
-                            Decrypt & Tree
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {rooms
+                      .filter((r) => {
+                        if (roomFilter === 'human' && r.isAiRoom) return false;
+                        if (roomFilter === 'ai' && !r.isAiRoom) return false;
+                        if (roomFilter === 'encrypted' && !r.encrypted) return false;
+                        if (roomSearch.trim()) {
+                          const q = roomSearch.toLowerCase();
+                          const matchText = `${r.roomId} ${r.user1Alias} ${r.user2Alias}`.toLowerCase();
+                          if (!matchText.includes(q)) return false;
+                        }
+                        return true;
+                      })
+                      .map((r) => (
+                        <tr key={r.roomId}>
+                          <td className="mono">{String(r.roomId).slice(0, 8)}...</td>
+                          <td>{r.user1Alias} × {r.user2Alias}</td>
+                          <td>
+                            <span className={`badge ${r.isAiRoom ? 'sky' : 'emerald'}`}>
+                              {r.isAiRoom ? 'AI' : 'Human'}
+                            </span>
+                          </td>
+                          <td className="mono">{r.messagesCount}</td>
+                          <td className="mono" style={{ color: '#047857' }}>{r.compressionSavingsPct}%</td>
+                          <td className="mono">
+                            {r.shannonEntropy ?? '-'} / {r.averageCodeLength ?? '-'}
+                          </td>
+                          <td>
+                            <span className={`badge ${r.encrypted ? 'emerald' : 'amber'}`}>
+                              <Lock size={11} /> {r.encrypted ? 'AES-256-GCM' : 'Legacy'}
+                            </span>
+                          </td>
+                          <td>
+                            <button className="btn primary" onClick={() => handleInspectRoom(r.roomId)}>
+                              Decrypt &amp; Tree
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
                     {rooms.length === 0 && (
-                      <tr><td colSpan={7} style={{ color: '#575049' }}>No archived rooms yet.</td></tr>
+                      <tr><td colSpan={8} style={{ color: '#575049' }}>No archived rooms yet.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -563,6 +899,43 @@ export default function App() {
         {/* TAB 2.5: DYNAMIC TOPICS & CAMPAIGNS */}
         {tab === 'content' && (
           <div style={{ display: 'grid', gap: 16 }}>
+            <div className="card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                <h3 style={{ margin: 0 }}>Campus Stones Economy &amp; Early-Bird EWU Avatars</h3>
+                <span className="badge amber">
+                  Total Stones in Circulation: {totalStonesInCirculation} 💎
+                </span>
+              </div>
+              <div className="grid-4" style={{ marginBottom: 0 }}>
+                {earlyBirdAvatars.map((av) => {
+                  const limit = Number(av.free_claim_limit || 20);
+                  const claimed = Number(av.claimed_count || 0);
+                  const pct = Math.min(100, Math.round((claimed / Math.max(1, limit)) * 100));
+                  const isFree = limit > 0 && claimed < limit;
+                  return (
+                    <div key={av.id} style={{ background: '#fffdf8', padding: 12, borderRadius: 12, border: '1.5px solid #1e1b18' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                        <span style={{ fontSize: 20 }}>{av.icon_emoji || '🎭'}</span>
+                        <span className={`badge ${isFree ? 'emerald' : 'sky'}`}>
+                          {isFree ? 'FREE (<20)' : `${av.stone_cost} 💎`}
+                        </span>
+                      </div>
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>{av.name}</div>
+                      <div className="mono" style={{ fontSize: 11, color: '#575049', margin: '4px 0 6px' }}>
+                        Claimed: {claimed} / {limit}
+                      </div>
+                      <div style={{ height: 7, background: '#fff4e4', borderRadius: 999, border: '1px solid #1e1b18', overflow: 'hidden' }}>
+                        <div style={{ width: `${pct}%`, height: '100%', background: isFree ? '#0fb881' : '#2563eb' }} />
+                      </div>
+                    </div>
+                  );
+                })}
+                {earlyBirdAvatars.length === 0 && (
+                  <div style={{ color: '#575049', fontSize: 13 }}>No early-bird avatars loaded yet.</div>
+                )}
+              </div>
+            </div>
+
             <div className="card">
               <h3>Today's Bench Topic (Live in Flutter App)</h3>
               <p style={{ color: '#575049', fontSize: 13, marginTop: 0 }}>
@@ -910,6 +1283,11 @@ export default function App() {
                         <span className={`badge ${rep.resolved ? 'emerald' : 'rose'}`}>
                           {rep.resolved ? 'Resolved' : 'Open'}
                         </span>
+                        {rep.overdue24h && (
+                          <span className="badge rose" style={{ marginLeft: 4 }}>
+                            &gt;24h SLA
+                          </span>
+                        )}
                       </td>
                       <td className="mono">{new Date(rep.created_at).toLocaleString()}</td>
                       <td>
@@ -968,6 +1346,7 @@ export default function App() {
                             <span className="badge amber">Offline</span>
                           )}
                           {u.is_admin && <span className="badge sky" style={{ marginLeft: 4 }}>Admin</span>}
+                          {u.is_muted && <span className="badge amber" style={{ marginLeft: 4 }}>Muted</span>}
                           {u.is_banned && <span className="badge rose" style={{ marginLeft: 4 }}>Banned</span>}
                         </td>
                         <td>
@@ -1020,15 +1399,49 @@ export default function App() {
                             Reward
                           </button>
                           {!u.is_admin && (
-                            <button
-                              className={`btn ${u.is_banned ? '' : 'danger'}`}
-                              onClick={async () => {
-                                await AdminApi.setUserBan(auth, u.id, !u.is_banned);
-                                loadCurrentTab(auth, 'moderation');
-                              }}
-                            >
-                              {u.is_banned ? 'Unban' : 'Ban'}
-                            </button>
+                            <>
+                              {u.is_muted ? (
+                                <button
+                                  className="btn"
+                                  onClick={async () => {
+                                    await AdminApi.muteUser(auth, u.id, 0);
+                                    loadCurrentTab(auth, 'moderation');
+                                  }}
+                                >
+                                  Unmute
+                                </button>
+                              ) : (
+                                <>
+                                  <button
+                                    className="btn"
+                                    onClick={async () => {
+                                      await AdminApi.muteUser(auth, u.id, 24);
+                                      loadCurrentTab(auth, 'moderation');
+                                    }}
+                                  >
+                                    Mute 24h
+                                  </button>
+                                  <button
+                                    className="btn"
+                                    onClick={async () => {
+                                      await AdminApi.muteUser(auth, u.id, 168);
+                                      loadCurrentTab(auth, 'moderation');
+                                    }}
+                                  >
+                                    Mute 7d
+                                  </button>
+                                </>
+                              )}
+                              <button
+                                className={`btn ${u.is_banned ? '' : 'danger'}`}
+                                onClick={async () => {
+                                  await AdminApi.setUserBan(auth, u.id, !u.is_banned);
+                                  loadCurrentTab(auth, 'moderation');
+                                }}
+                              >
+                                {u.is_banned ? 'Unban' : 'Ban'}
+                              </button>
+                            </>
                           )}
                         </td>
                       </tr>
@@ -1169,6 +1582,96 @@ export default function App() {
                 </div>
               </div>
             )}
+
+            <div className="card">
+              <h3>Admin Audit Log ({auditLogs.length})</h3>
+              <div style={{ overflowX: 'auto', maxHeight: 280 }}>
+                <table>
+                  <thead>
+                    <tr><th>When</th><th>Admin</th><th>Action</th><th>Target</th><th>Details</th></tr>
+                  </thead>
+                  <tbody>
+                    {auditLogs.map((log) => (
+                      <tr key={log.id}>
+                        <td className="mono" style={{ fontSize: 11 }}>{new Date(log.created_at).toLocaleString()}</td>
+                        <td className="mono" style={{ fontSize: 11 }}>{log.admin_email}</td>
+                        <td><span className="badge sky">{log.action}</span></td>
+                        <td className="mono" style={{ fontSize: 11 }}>{log.target_type}:{String(log.target_id || '').slice(0, 8)}</td>
+                        <td className="mono" style={{ fontSize: 11, color: '#575049' }}>{JSON.stringify(log.details || {})}</td>
+                      </tr>
+                    ))}
+                    {auditLogs.length === 0 && (
+                      <tr><td colSpan={5} style={{ color: '#575049' }}>No admin actions recorded yet.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 5: SYSTEM HEALTH & CLUSTER GUARDRAILS */}
+        {tab === 'system' && systemHealth && (
+          <div style={{ display: 'grid', gap: 16 }}>
+            <div className="card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
+                <h3 style={{ margin: 0 }}>4-Node EWU Ollama Cluster ({systemHealth.ollamaCluster?.modelName || 'gemma4:12b'})</h3>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <span className="badge sky">Calls: {systemHealth.ollamaCluster?.stats?.totalCalls ?? 0}</span>
+                  <span className="badge emerald">Avg Latency: {systemHealth.ollamaCluster?.stats?.avgLatencyMs ?? 0} ms</span>
+                  <span className="badge amber">Last: {systemHealth.ollamaCluster?.stats?.lastLatencyMs ?? 0} ms</span>
+                  <span className="badge rose">Errors: {systemHealth.ollamaCluster?.stats?.totalErrors ?? 0}</span>
+                </div>
+              </div>
+              <div className="grid-4" style={{ marginBottom: 0 }}>
+                {(systemHealth.ollamaCluster?.nodes || []).map((n: any) => (
+                  <div key={n.host} style={{ background: '#fffdf8', padding: 14, borderRadius: 14, border: '1.5px solid #1e1b18' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <strong>{n.label}</strong>
+                      <span className={`badge ${n.online ? 'emerald' : 'rose'}`}>
+                        {n.online ? 'Online' : 'Offline'}
+                      </span>
+                    </div>
+                    <div className="mono" style={{ fontSize: 11, color: '#575049', marginBottom: 8 }}>{n.host}</div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      <span className="badge amber">{n.latencyMs} ms</span>
+                      {n.hasModel && <span className="badge emerald">gemma4 ready</span>}
+                      {n.isWarmHost && <span className="badge sky">★ Warm VRAM</span>}
+                      {n.error && <span className="badge rose">{n.error}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid-2">
+              <div className="card">
+                <h3>Azure F1 Runtime &amp; Redis Cache</h3>
+                <table>
+                  <tbody>
+                    <tr><td>Redis Status</td><td><span className={`badge ${systemHealth.redis?.ok ? 'emerald' : 'rose'}`}>{systemHealth.redis?.ok ? 'Connected' : 'Down'}</span></td></tr>
+                    <tr><td>Redis Ping Latency</td><td className="mono">{systemHealth.redis?.pingMs ?? -1} ms</td></tr>
+                    <tr><td>Process Uptime</td><td className="mono">{formatDuration(systemHealth.server?.uptimeSeconds ?? 0)}</td></tr>
+                    <tr><td>RSS / Heap RAM</td><td className="mono">{systemHealth.server?.rssMemoryMb ?? 0} MB / {systemHealth.server?.heapUsedMb ?? 0} MB</td></tr>
+                    <tr><td>Node Version / Platform</td><td className="mono">{systemHealth.server?.nodeVersion} ({systemHealth.server?.platform})</td></tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="card">
+                <h3>Supabase Free-Tier &amp; Huffman Storage Savings</h3>
+                <table>
+                  <tbody>
+                    <tr><td>Registered Users Rows</td><td className="mono">{systemHealth.supabase?.counts?.users ?? 0}</td></tr>
+                    <tr><td>Archived Room Rows</td><td className="mono">{systemHealth.supabase?.counts?.room_conversations ?? 0}</td></tr>
+                    <tr><td>Chat Sessions Rows</td><td className="mono">{systemHealth.supabase?.counts?.chat_sessions ?? 0}</td></tr>
+                    <tr><td>Site Visitor Event Rows</td><td className="mono">{systemHealth.supabase?.counts?.site_events ?? 0}</td></tr>
+                    <tr><td>Huffman Original → Compressed</td><td className="mono">{((systemHealth.supabase?.huffmanStorage?.totalOriginalBytes ?? 0) / 1024).toFixed(1)} KB → {((systemHealth.supabase?.huffmanStorage?.totalCompressedBytes ?? 0) / 1024).toFixed(1)} KB</td></tr>
+                    <tr><td>Total Bytes Saved</td><td className="mono" style={{ color: '#047857' }}>{((systemHealth.supabase?.huffmanStorage?.totalBytesSaved ?? 0) / 1024).toFixed(1)} KB ({systemHealth.supabase?.huffmanStorage?.avgSavingsPct ?? 0}% avg)</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         )}
       </main>

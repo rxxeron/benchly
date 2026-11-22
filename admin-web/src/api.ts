@@ -100,5 +100,15 @@ export const AdminApi = {
     adminFetch<any>(
       `/api/admin/algorithms/workflows?stones=${stones}&target=${target}&sample=${encodeURIComponent(sample)}`,
       auth
-    )
+    ),
+  getGrowth: (auth: AdminAuth, days = 14) =>
+    adminFetch<any>(`/api/admin/growth?days=${days}`, auth),
+  getSystemHealth: (auth: AdminAuth) => adminFetch<any>('/api/admin/system-health', auth),
+  muteUser: (auth: AdminAuth, userId: string, hours: number) =>
+    adminFetch<any>(`/api/admin/users/${encodeURIComponent(userId)}/mute`, auth, {
+      method: 'POST',
+      body: JSON.stringify({ hours })
+    }),
+  getAuditLogs: (auth: AdminAuth, limit = 50) =>
+    adminFetch<{ logs: any[] }>(`/api/admin/audit-logs?limit=${limit}`, auth)
 };

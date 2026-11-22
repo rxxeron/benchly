@@ -53,6 +53,7 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
     )..repeat();
     _fetchProfile();
     _fetchCampusConfig();
+    _recordAppOpenBeacon();
     _connectSocket();
     _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((data) {
       final token = data.session?.accessToken;
@@ -72,6 +73,20 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
     _radarController.dispose();
     socket.dispose();
     super.dispose();
+  }
+
+  Future<void> _recordAppOpenBeacon() async {
+    try {
+      await http.post(
+        Uri.parse('${AppConfig.socketUrl}/api/telemetry/visit'),
+        headers: const {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'domain': kIsWeb ? 'app.benchly.live' : 'android-app',
+          'event_type': 'app_open',
+          'platform': kIsWeb ? 'web' : 'android',
+        }),
+      );
+    } catch (_) {}
   }
 
   Future<void> _fetchCampusConfig() async {

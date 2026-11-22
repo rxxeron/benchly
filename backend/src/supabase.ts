@@ -36,7 +36,7 @@ export async function authenticateSocket(token: string) {
     // 2. Fetch their generated profile from the users table
     const { data: profile, error: dbError } = await supabase
         .from('users')
-        .select('id, generated_alias, gender, streak_count, dept_code, batch_year, semester_intake, email, alias_changed_at, alias_change_count, created_at')
+        .select('id, generated_alias, gender, streak_count, dept_code, batch_year, semester_intake, email, alias_changed_at, alias_change_count, created_at, muted_until')
         .eq('id', user.id)
         .single();
 
@@ -74,6 +74,7 @@ export async function authenticateSocket(token: string) {
         email: profile.email || user.email,
         alias_changed_at: profile.alias_changed_at,
         alias_change_count: profile.alias_change_count || 0,
+        muted_until: profile.muted_until || null,
         aliasRotationDue: false
     };
 }

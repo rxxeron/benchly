@@ -45,7 +45,29 @@ export default function App() {
   );
   const [campaigns, setCampaigns] = useState<any[]>([]);
 
+  function sendTelemetry(eventType: string, extra?: Record<string, any>) {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      fetch(`${API_URL}/api/telemetry/visit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        keepalive: true,
+        body: JSON.stringify({
+          domain: window.location.hostname || 'benchly.live',
+          event_type: eventType,
+          path: window.location.pathname || '/',
+          referrer: document.referrer || null,
+          utm_source: params.get('utm_source'),
+          invite_code: params.get('invite'),
+          platform: 'web',
+          ...(extra || {})
+        })
+      }).catch(() => {});
+    } catch {}
+  }
+
   useEffect(() => {
+    sendTelemetry('landing_view');
     fetch(`${API_URL}/api/campus/config`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
@@ -78,7 +100,7 @@ export default function App() {
             <a href="#safety">Campus Safety</a>
           </div>
 
-          <a href={APP_URL} className="btn btn-primary btn-sm">
+          <a href={APP_URL} onClick={() => sendTelemetry('cta_open_app', { metadata: { source: 'navbar' } })} className="btn btn-primary btn-sm">
             Open App <ArrowRight size={15} />
           </a>
         </nav>
@@ -106,7 +128,7 @@ export default function App() {
             </p>
 
             <div className="hero-actions">
-              <a href={APP_URL} className="btn btn-coral">
+              <a href={APP_URL} onClick={() => sendTelemetry('cta_open_app', { metadata: { source: 'hero' } })} className="btn btn-coral">
                 Take a Seat on Benchly <ArrowRight size={17} />
               </a>
               <a href="#vibes" className="btn btn-white">
@@ -172,7 +194,7 @@ export default function App() {
               “{todaysTopic}”
             </div>
           </div>
-          <a href={APP_URL} className="btn btn-primary btn-sm">
+          <a href={APP_URL} onClick={() => sendTelemetry('cta_open_app', { metadata: { source: 'topic_banner' } })} className="btn btn-primary btn-sm">
             Join the Adda <ArrowRight size={15} />
           </a>
         </section>
@@ -195,7 +217,7 @@ export default function App() {
                   </div>
                   <h3 style={{ fontSize: 18, marginBottom: 6 }}>{c.title}</h3>
                   <p style={{ margin: '0 0 14px', fontSize: 14, color: '#575049' }}>{c.description}</p>
-                  <a href={APP_URL} className="btn btn-white btn-sm">
+                  <a href={APP_URL} onClick={() => sendTelemetry('cta_open_app', { metadata: { source: 'campaign_card', campaignId: c.id } })} className="btn btn-white btn-sm">
                     Start Challenge <ArrowRight size={14} />
                   </a>
                 </div>
@@ -341,7 +363,7 @@ export default function App() {
             Your bench is waiting at <strong>app.benchly.live</strong>. Grab a virtual cup of cha and
             say hi to someone new today.
           </p>
-          <a href={APP_URL} className="btn btn-primary" style={{ fontSize: 16, padding: '14px 28px' }}>
+          <a href={APP_URL} onClick={() => sendTelemetry('cta_open_app', { metadata: { source: 'footer_cta' } })} className="btn btn-primary" style={{ fontSize: 16, padding: '14px 28px' }}>
             Launch app.benchly.live <ArrowRight size={18} />
           </a>
         </section>

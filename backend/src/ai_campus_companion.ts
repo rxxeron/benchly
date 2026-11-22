@@ -63,6 +63,79 @@ export class AiCampusCompanionEngine {
     private static modelName: string = (process.env.AI_BENCH_MODEL || 'gemma4:12b').trim();
     private static rrIndex = 0;
     private static lastWarmHost: string | null = null;
+    private static totalCalls = 0;
+    private static totalErrors = 0;
+    private static totalLatencyMs = 0;
+    private static lastLatencyMs = 0;
+
+    static async checkClusterHealth() {
+        const publicHosts = this.hosts.filter(
+            (h) => h.startsWith('https://') || h.includes('100.') || h.includes('127.0.0.1')
+        );
+        const nodes = await Promise.all(
+            publicHosts.map(async (host) => {
+                const start = Date.now();
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), 2500);
+                try {
+                    const res = await fetch(`${host}/api/tags`, { signal: controller.signal });
+                    clearTimeout(timer);
+                    const latencyMs = Date.now() - start;
+                    if (!res.ok) {
+                        return {
+                            host,
+                            label: host.replace(/^https?:\/\//, '').split('.')[0],
+                            online: false,
+                            latencyMs,
+                            hasModel: false,
+                            isWarmHost: host === this.lastWarmHost,
+                            error: `HTTP ${res.status}`
+                        };
+                    }
+                    const data: any = await res.json().catch(() => ({}));
+                    const models: string[] = Array.isArray(data?.models)
+                        ? data.models.map((m: any) => String(m?.name || m?.model || ''))
+                        : [];
+                    const hasModel = models.some((m) => m.includes(this.modelName) || m.includes('gemma4'));
+                    return {
+                        host,
+                        label: host.replace(/^https?:\/\//, '').split('.')[0],
+                        online: true,
+                        latencyMs,
+                        hasModel,
+                        isWarmHost: host === this.lastWarmHost,
+                        modelsCount: models.length
+                    };
+                } catch (err: any) {
+                    clearTimeout(timer);
+                    return {
+                        host,
+                        label: host.replace(/^https?:\/\//, '').split('.')[0],
+                        online: false,
+                        latencyMs: Date.now() - start,
+                        hasModel: false,
+                        isWarmHost: host === this.lastWarmHost,
+                        error: err?.name === 'AbortError' ? 'Timeout (>2.5s)' : err?.message || 'Unreachable'
+                    };
+                }
+            })
+        );
+
+        const avgLatencyMs =
+            this.totalCalls > 0 ? Math.round(this.totalLatencyMs / this.totalCalls) : 0;
+
+        return {
+            modelName: this.modelName,
+            lastWarmHost: this.lastWarmHost,
+            stats: {
+                totalCalls: this.totalCalls,
+                totalErrors: this.totalErrors,
+                avgLatencyMs,
+                lastLatencyMs: this.lastLatencyMs
+            },
+            nodes
+        };
+    }
 
     static createSession(roomId: string, icebreaker: string, matchMode: string): AiRoomSession {
         const aiAlias = generateServerNickname();
@@ -106,9 +179,19 @@ export class AiCampusCompanionEngine {
         if (session.history.length > 17) {
             session.history = [session.history[0], ...session.history.slice(-16)];
         }
-        const reply = await this.callOllamaWithFailover(session.history, userMessage);
-        session.history.push({ role: 'assistant', content: reply });
-        return reply;
+        const t0 = Date.now();
+        this.totalCalls += 1;
+        try {
+            const reply = await this.callOllamaWithFailover(session.history, userMessage);
+            const elapsed = Date.now() - t0;
+            this.lastLatencyMs = elapsed;
+            this.totalLatencyMs += elapsed;
+            session.history.push({ role: 'assistant', content: reply });
+            return reply;
+        } catch (err) {
+            this.totalErrors += 1;
+            throw err;
+        }
     }
 
     private static async querySingleHost(
