@@ -241,10 +241,15 @@ async function saveRoomSession(roomId: string) {
         const sealedArchive = CanonicalHuffmanCodec.sealEncryptedHuffmanArchive(rawTranscriptJson);
 
         // 2. Persist entire chat session in ONE SINGLE ROW in room_conversations (zero plaintext at rest)
-        await supabase.from('room_conversations').insert({
+        const isUuid = (v: string | undefined | null) =>
+            Boolean(v && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v));
+        const user1Uuid = isUuid(mem.user1) ? mem.user1 : null;
+        const user2Uuid = isUuid(mem.user2) ? mem.user2 : null;
+
+        const { error: convErr } = await supabase.from('room_conversations').insert({
             room_id: roomId,
-            user1_id: mem.user1,
-            user2_id: mem.user2,
+            user1_id: user1Uuid,
+            user2_id: user2Uuid,
             user1_alias: mem.user1Alias || 'Anonymous Student',
             user2_alias: mem.user2Alias || 'Anonymous Student',
             messages: [],
@@ -255,30 +260,40 @@ async function saveRoomSession(roomId: string) {
             handshake_agreed: isHandshakeAgreed,
             closed_at: new Date().toISOString()
         });
+        if (convErr) {
+            console.error(`❌ room_conversations insert failed for ${roomId}:`, convErr.message);
+        } else {
+            console.log(
+                `🔐🗜️ Huffman+AES-256-GCM archived room ${roomId}: ${sealedArchive.originalBytes}B -> ${sealedArchive.compressedBytes}B (${sealedArchive.savingsPercent}% saved, H(X)=${sealedArchive.shannonEntropy})`
+            );
+        }
 
-        console.log(
-            `🔐🗜️ Huffman+AES-256-GCM archived room ${roomId}: ${sealedArchive.originalBytes}B -> ${sealedArchive.compressedBytes}B (${sealedArchive.savingsPercent}% saved, H(X)=${sealedArchive.shannonEntropy})`
-        );
-
-        // 3. Persist individual student engagement statistics in chat_sessions
-        await supabase.from('chat_sessions').insert([
-            {
+        // 3. Persist individual student engagement statistics in chat_sessions (real UUID students only)
+        const sessionRows: any[] = [];
+        if (user1Uuid) {
+            sessionRows.push({
                 room_id: roomId,
-                user_id: mem.user1,
-                partner_id: mem.user2,
+                user_id: user1Uuid,
+                partner_id: user2Uuid,
                 messages_sent: mem.user1Messages,
                 messages_received: mem.user2Messages,
                 duration_seconds: durationSec
-            },
-            {
+            });
+        }
+        if (user2Uuid) {
+            sessionRows.push({
                 room_id: roomId,
-                user_id: mem.user2,
-                partner_id: mem.user1,
+                user_id: user2Uuid,
+                partner_id: user1Uuid,
                 messages_sent: mem.user2Messages,
                 messages_received: mem.user1Messages,
                 duration_seconds: durationSec
-            }
-        ]);
+            });
+        }
+        if (sessionRows.length > 0) {
+            const { error: sessErr } = await supabase.from('chat_sessions').insert(sessionRows);
+            if (sessErr) console.error(`❌ chat_sessions insert failed for ${roomId}:`, sessErr.message);
+        }
 
         // 4. Free Redis cache RAM for this concluded room
         await redis.del(
