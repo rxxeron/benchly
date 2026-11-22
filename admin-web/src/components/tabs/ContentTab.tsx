@@ -8,6 +8,7 @@ interface ContentTabProps {
   campaigns: any[];
   earlyBirdAvatars: any[];
   totalStonesInCirculation: number;
+  pushSubscribersCount: number;
   onReload: () => void;
   onError: (msg: string) => void;
 }
@@ -19,10 +20,14 @@ export function ContentTab({
   campaigns,
   earlyBirdAvatars,
   totalStonesInCirculation,
+  pushSubscribersCount,
   onReload,
   onError
 }: ContentTabProps) {
   const [topicSavedMsg, setTopicSavedMsg] = useState('');
+  const [pushTitle, setPushTitle] = useState('');
+  const [pushBody, setPushBody] = useState('');
+  const [pushResultMsg, setPushResultMsg] = useState('');
   const [campTitle, setCampTitle] = useState('');
   const [campDesc, setCampDesc] = useState('');
   const [campMetric, setCampMetric] = useState<'streak_days' | 'total_chats' | 'referrals'>('streak_days');
@@ -61,6 +66,56 @@ export function ContentTab({
           })}
           {earlyBirdAvatars.length === 0 && <div style={{ color: '#575049', fontSize: 13 }}>No early-bird avatars loaded yet.</div>}
         </div>
+      </div>
+
+      <div className="card">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+          <h3 style={{ margin: 0 }}>Send Campus Web Push Notification (VAPID • No Firebase)</h3>
+          <span className="badge sky">Subscribed Devices: {pushSubscribersCount}</span>
+        </div>
+        <p style={{ color: '#575049', fontSize: 13, marginTop: 0 }}>
+          Delivers an encrypted W3C VAPID push notification directly to students' browsers &amp; installed PWAs (even when closed) and automatically prunes expired endpoints.
+        </p>
+        {pushResultMsg && <div className="badge emerald" style={{ marginBottom: 10 }}>{pushResultMsg}</div>}
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            setPushResultMsg('');
+            onError('');
+            try {
+              const res = await AdminApi.broadcastPush(auth, pushTitle, pushBody);
+              setPushResultMsg(`Delivered to ${res.sent ?? 0} devices (pruned ${res.pruned ?? 0} stale endpoints).`);
+              setPushTitle('');
+              setPushBody('');
+              onReload();
+            } catch (err: any) {
+              onError(err.message);
+            }
+          }}
+          style={{ display: 'grid', gap: 10 }}
+        >
+          <div className="grid-2">
+            <input
+              className="input"
+              required
+              value={pushTitle}
+              onChange={(e) => setPushTitle(e.target.value)}
+              placeholder="Push Title (e.g., 🔥 Afternoon Adda Rush on Benchly!)"
+            />
+            <input
+              className="input"
+              required
+              value={pushBody}
+              onChange={(e) => setPushBody(e.target.value)}
+              placeholder="Message Body (e.g., Jump on a 15-min bench or 5-person lounge & claim +2 Stones!)"
+            />
+          </div>
+          <div>
+            <button className="btn primary" type="submit">
+              🔔 Send Push to Subscribed Devices
+            </button>
+          </div>
+        </form>
       </div>
 
       <div className="card">

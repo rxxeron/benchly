@@ -42,6 +42,49 @@
       });
     }
 
+    function urlBase64ToUint8Array(base64String) {
+      var padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+      var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+      var rawData = window.atob(base64);
+      var outputArray = new Uint8Array(rawData.length);
+      for (var i = 0; i < rawData.length; ++i) {
+        outputArray[i] = rawData.charCodeAt(i);
+      }
+      return outputArray;
+    }
+
+    window.benchlySyncPushSubscription = async function (apiBase, bearerToken) {
+      try {
+        if (!('serviceWorker' in navigator) || !('PushManager' in window)) return 'unsupported';
+        if (Notification.permission !== 'granted') return 'not_granted';
+        var base = String(apiBase || 'https://api.benchly.live').replace(/\/$/, '');
+        var keyRes = await fetch(base + '/api/push/vapid-public-key');
+        if (!keyRes.ok) return 'no_vapid_key';
+        var keyData = await keyRes.json();
+        if (!keyData || !keyData.publicKey) return 'no_vapid_key';
+
+        var reg = await navigator.serviceWorker.register('/benchly-sw.js');
+        await navigator.serviceWorker.ready;
+        var sub = await reg.pushManager.getSubscription();
+        if (!sub) {
+          sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(keyData.publicKey)
+          });
+        }
+        var headers = { 'Content-Type': 'application/json' };
+        if (bearerToken) headers['Authorization'] = 'Bearer ' + bearerToken;
+        await fetch(base + '/api/push/subscribe', {
+          method: 'POST',
+          headers: headers,
+          body: JSON.stringify({ subscription: sub })
+        });
+        return 'subscribed';
+      } catch (e) {
+        return 'error';
+      }
+    };
+
     window.benchlyPlayChime = function () {
       try {
         var Ctx = window.AudioContext || window.webkitAudioContext;
@@ -90,7 +133,7 @@
       } catch (_) {}
     };
 
-    window.benchlyEnableNotifications = async function () {
+    window.benchlyEnableNotifications = async function (apiBase, bearerToken) {
       try {
         window.benchlyPlayChime();
         if (!('Notification' in window)) return 'unsupported';
@@ -99,7 +142,8 @@
           perm = await Notification.requestPermission();
         }
         if (perm === 'granted') {
-          window.benchlyNotify('🔔 Benchly Alerts Enabled!', 'You will be notified when a match is found or a classmate messages you.', 'welcome');
+          await window.benchlySyncPushSubscription(apiBase, bearerToken);
+          window.benchlyNotify('🔔 Benchly Push Alerts Active!', 'You will receive alerts even when the app is in the background.', 'welcome');
         }
         return perm;
       } catch (_) {

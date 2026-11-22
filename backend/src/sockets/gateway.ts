@@ -7,6 +7,7 @@ import { applyCooldown, removeUserFromQueues } from '../matchmaker';
 import type { AnalyticsEngine } from '../analytics';
 import { getRandomIcebreaker } from '../ewu_helper';
 import { generateServerNickname } from '../nickname_engine';
+import { WebPushService } from '../push_service';
 import { CHAT_DURATION_MS, CHAT_WARNING_MS, DISCONNECT_GRACE_MS, SocketState } from './state';
 import { registerMatchmakingHandlers } from './matchmaking_handlers';
 import { registerGameHandlers } from './game_handlers';
@@ -205,6 +206,11 @@ export function registerSocketGateway(
                     partnerBadge: 'EWU Student',
                     isDirectInvite: true
                 });
+                WebPushService.sendToUser(supabase, invite.creatorId, {
+                    title: '🪑 Friend Joined Your Bench!',
+                    body: `${user.alias || 'Your friend'} just opened your invite link — tap to chat!`,
+                    tag: 'invite_join'
+                }).catch(() => {});
                 socket.emit('match_found', {
                     roomId: invite.roomId,
                     role: 'joiner',

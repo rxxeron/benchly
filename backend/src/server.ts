@@ -12,6 +12,7 @@ import { AnalyticsEngine } from './analytics';
 import { registerTelemetryRoutes } from './routes/telemetry';
 import { registerPublicRoutes } from './routes/public';
 import { registerAdminRoutes } from './routes/admin';
+import { registerPushRoutes } from './routes/push';
 import { createSocketState } from './sockets/state';
 import { registerSocketGateway } from './sockets/gateway';
 
@@ -165,6 +166,7 @@ const analytics = new AnalyticsEngine(redis);
 const socketState = createSocketState({ supabase, redis });
 
 registerTelemetryRoutes(app, { supabase, redis });
+registerPushRoutes(app, { supabase });
 registerPublicRoutes(app, {
     supabase,
     redis,

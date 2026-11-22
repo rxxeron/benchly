@@ -55,6 +55,7 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
     _fetchProfile();
     _fetchCampusConfig();
     _recordAppOpenBeacon();
+    _syncWebPushOnStartup();
     _connectSocket();
     _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((data) {
       final token = data.session?.accessToken;
@@ -74,6 +75,11 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
     _radarController.dispose();
     socket.dispose();
     super.dispose();
+  }
+
+  Future<void> _syncWebPushOnStartup() async {
+    final token = Supabase.instance.client.auth.currentSession?.accessToken;
+    await syncBenchlyPushSubscription(apiBase: AppConfig.socketUrl, bearerToken: token);
   }
 
   Future<void> _recordAppOpenBeacon() async {
@@ -1101,7 +1107,11 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
           GestureDetector(
             onTap: () async {
               final messenger = ScaffoldMessenger.of(context);
-              final perm = await enableBenchlyNotifications();
+              final token = Supabase.instance.client.auth.currentSession?.accessToken;
+              final perm = await enableBenchlyNotifications(
+                apiBase: AppConfig.socketUrl,
+                bearerToken: token,
+              );
               final pwaRes = await promptBenchlyPwaInstall();
               if (!mounted) return;
               final msg = pwaRes == 'accepted'

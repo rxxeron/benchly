@@ -1,5 +1,6 @@
 import express from 'express';
 import type { AdminHelpers, AdminRoutesDeps } from './helpers';
+import { WebPushService } from '../../push_service';
 
 export function registerAdminContentRoutes(
     app: express.Express,
@@ -13,17 +14,24 @@ export function registerAdminContentRoutes(
         const admin = await requireAdmin(req, res);
         if (!admin) return;
         try {
-            const [{ data: setting }, { data: campaigns }, { data: perks }, { data: usersStones }, { data: claimRows }] =
-                await Promise.all([
-                    supabase.from('app_settings').select('value, updated_at, updated_by').eq('key', 'todays_bench_topic').maybeSingle(),
-                    supabase.from('reward_campaigns').select('*').order('created_at', { ascending: false }),
-                    supabase
-                        .from('stone_perks')
-                        .select('id, name, category, icon_emoji, stone_cost, free_claim_limit, claimed_count')
-                        .order('stone_cost', { ascending: true }),
-                    supabase.from('users').select('stones_balance').limit(5000),
-                    supabase.from('user_campaign_claims').select('campaign_id').limit(5000)
-                ]);
+            const [
+                { data: setting },
+                { data: campaigns },
+                { data: perks },
+                { data: usersStones },
+                { data: claimRows },
+                pushSubsCnt
+            ] = await Promise.all([
+                supabase.from('app_settings').select('value, updated_at, updated_by').eq('key', 'todays_bench_topic').maybeSingle(),
+                supabase.from('reward_campaigns').select('*').order('created_at', { ascending: false }),
+                supabase
+                    .from('stone_perks')
+                    .select('id, name, category, icon_emoji, stone_cost, free_claim_limit, claimed_count')
+                    .order('stone_cost', { ascending: true }),
+                supabase.from('users').select('stones_balance').limit(5000),
+                supabase.from('user_campaign_claims').select('campaign_id').limit(5000),
+                supabase.from('push_subscriptions').select('id', { count: 'exact', head: true })
+            ]);
 
             const totalStonesInCirculation = (usersStones || []).reduce(
                 (sum: number, u: any) => sum + Number(u.stones_balance || 0),
@@ -46,11 +54,39 @@ export function registerAdminContentRoutes(
                 topicUpdatedAt: setting?.updated_at || null,
                 campaigns: campaignsWithClaims,
                 earlyBirdAvatars,
-                totalStonesInCirculation
+                totalStonesInCirculation,
+                pushSubscribersCount: pushSubsCnt.count || 0
             });
         } catch (err: any) {
             console.error('Admin content load error:', err);
             res.status(500).json({ error: 'Failed to load dynamic topics & campaigns' });
+        }
+    });
+
+    app.post('/api/admin/push/broadcast', async (req, res) => {
+        const admin = await requireAdmin(req, res);
+        if (!admin) return;
+        try {
+            const title = (req.body?.title || '').toString().trim().slice(0, 80);
+            const body = (req.body?.body || '').toString().trim().slice(0, 220);
+            if (!title || !body) {
+                return res.status(400).json({ error: 'Title and message body are required.' });
+            }
+            const stats = await WebPushService.broadcastAll(supabase, {
+                title,
+                body,
+                tag: 'campus_broadcast',
+                url: 'https://app.benchly.live/'
+            });
+            await logAdminAction(admin.email, 'broadcast_push', 'push_subscriptions', null, {
+                title,
+                body,
+                ...stats
+            });
+            return res.json({ ok: true, ...stats });
+        } catch (err: any) {
+            console.error('Admin push broadcast error:', err);
+            return res.status(500).json({ error: 'Failed to send push broadcast' });
         }
     });
 

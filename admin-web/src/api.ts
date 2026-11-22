@@ -110,5 +110,10 @@ export const AdminApi = {
       body: JSON.stringify({ hours })
     }),
   getAuditLogs: (auth: AdminAuth, limit = 50) =>
-    adminFetch<{ logs: any[] }>(`/api/admin/audit-logs?limit=${limit}`, auth)
+    adminFetch<{ logs: any[] }>(`/api/admin/audit-logs?limit=${limit}`, auth),
+  broadcastPush: (auth: AdminAuth, title: string, body: string) =>
+    adminFetch<any>('/api/admin/push/broadcast', auth, {
+      method: 'POST',
+      body: JSON.stringify({ title, body })
+    })
 };

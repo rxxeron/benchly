@@ -5,6 +5,8 @@ import type { AnalyticsEngine } from '../analytics';
 import { findOrCreate1v1Match, joinOrCreateGroupLounge, applyCooldown, removeUserFromQueues } from '../matchmaker';
 import { getRandomIcebreaker } from '../ewu_helper';
 import { AiCampusCompanionEngine } from '../ai_campus_companion';
+import { supabase } from '../supabase';
+import { WebPushService } from '../push_service';
 import { CHAT_DURATION_MS, CHAT_WARNING_MS, SocketState } from './state';
 
 const AI_FALLBACK_DELAY_MS = Math.max(4, parseInt(process.env.AI_FALLBACK_SECONDS || '12', 10) || 12) * 1000;
@@ -67,6 +69,11 @@ export function registerMatchmakingHandlers(
                 };
                 io.to(match.matchedUser!).emit('match_found', joinerPayload);
                 if (otherSocketId) io.to(otherSocketId).emit('match_found', joinerPayload);
+                WebPushService.sendToUser(supabase, match.matchedUser!, {
+                    title: '🪑 Bench Match Found!',
+                    body: `Paired with ${user.alias || 'an EWU classmate'} — tap to start chatting!`,
+                    tag: 'match_found'
+                }).catch(() => {});
 
                 const tCreator = queueTimeouts.get(socket.id);
                 if (tCreator) {

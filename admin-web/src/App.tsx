@@ -59,6 +59,7 @@ export default function App() {
   const [selectedUserProfile, setSelectedUserProfile] = useState<any>(null);
   const [earlyBirdAvatars, setEarlyBirdAvatars] = useState<any[]>([]);
   const [totalStonesInCirculation, setTotalStonesInCirculation] = useState<number>(0);
+  const [pushSubscribersCount, setPushSubscribersCount] = useState<number>(0);
 
   const [walletStones, setWalletStones] = useState(13);
   const [targetStones, setTargetStones] = useState(12);
@@ -96,6 +97,7 @@ export default function App() {
         setCampaigns(res.campaigns || []);
         setEarlyBirdAvatars(res.earlyBirdAvatars || []);
         setTotalStonesInCirculation(Number(res.totalStonesInCirculation || 0));
+        setPushSubscribersCount(Number(res.pushSubscribersCount || 0));
       } else if (targetTab === 'algorithms') {
         setWorkflows(await AdminApi.getAlgorithmWorkflows(currentAuth, walletStones, targetStones, sampleMsg));
       } else if (targetTab === 'moderation') {
@@ -313,6 +315,7 @@ export default function App() {
             campaigns={campaigns}
             earlyBirdAvatars={earlyBirdAvatars}
             totalStonesInCirculation={totalStonesInCirculation}
+            pushSubscribersCount={pushSubscribersCount}
             onReload={() => loadCurrentTab(auth, 'content')}
             onError={setError}
           />
