@@ -372,9 +372,9 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                         TextField(
                           controller: _emailController,
                           keyboardType: TextInputType.emailAddress,
-                          style: const TextStyle(color: Colors.white, fontSize: 13.5),
+                          style: const TextStyle(color: Color(0xFF1E1B18), fontSize: 13.5),
                           decoration: InputDecoration(
-                            hintText: '2023-1-60-001@std.ewubd.edu',
+                            hintText: '2023-x-x-xxx@std.ewubd.edu',
                             hintStyle: TextStyle(color: Color(0xFF1E1B18).withValues(alpha: 0.28), fontSize: 13),
                             prefixIcon: const Icon(Icons.school_outlined, color: Color(0xFF0FB881), size: 18),
                             filled: true,
@@ -399,7 +399,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                           controller: _passwordController,
                           obscureText: _obscurePassword,
                           onSubmitted: (_) => _signInNativeInApp(),
-                          style: const TextStyle(color: Colors.white, fontSize: 13.5),
+                          style: const TextStyle(color: Color(0xFF1E1B18), fontSize: 13.5),
                           decoration: InputDecoration(
                             hintText: 'Password (min 8 chars)',
                             hintStyle: TextStyle(color: Color(0xFF1E1B18).withValues(alpha: 0.28), fontSize: 13),
@@ -517,18 +517,19 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                       onPressed: _signInWithGoogle,
                       style: OutlinedButton.styleFrom(
                         backgroundColor: Colors.white,
-                        foregroundColor: const Color(0xFFFFF9F0),
+                        foregroundColor: const Color(0xFF1E1B18),
+                        side: const BorderSide(color: Color(0xFF1E1B18), width: 1.8),
                         minimumSize: const Size(double.infinity, 48),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       ),
                       child: const Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.g_mobiledata_rounded, size: 28, color: Color(0xFFFFF9F0)),
+                          Icon(Icons.g_mobiledata_rounded, size: 28, color: Color(0xFF1E1B18)),
                           SizedBox(width: 6),
                           Text(
                             'Continue with Google',
-                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Color(0xFF1E1B18)),
                           ),
                         ],
                       ),
