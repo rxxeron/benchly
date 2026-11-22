@@ -62,6 +62,7 @@ export class AiCampusCompanionEngine {
 
     private static modelName: string = (process.env.AI_BENCH_MODEL || 'gemma4:12b').trim();
     private static rrIndex = 0;
+    private static lastWarmHost: string | null = null;
 
     static createSession(roomId: string, icebreaker: string, matchMode: string): AiRoomSession {
         const aiAlias = generateServerNickname();
@@ -110,80 +111,83 @@ export class AiCampusCompanionEngine {
         return reply;
     }
 
+    private static async querySingleHost(
+        host: string,
+        messages: AiChatMessage[],
+        timeoutMs: number
+    ): Promise<string> {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const res = await fetch(`${host}/api/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                signal: controller.signal,
+                body: JSON.stringify({
+                    model: this.modelName,
+                    messages,
+                    stream: false,
+                    think: false,
+                    keep_alive: '30m',
+                    options: {
+                        temperature: 0.85,
+                        top_p: 0.9,
+                        num_predict: 55,
+                        num_ctx: 1024
+                    }
+                })
+            });
+            clearTimeout(timer);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data: any = await res.json();
+            const content = (data?.message?.content || '').toString().trim();
+            if (!content) throw new Error('Empty reply');
+            this.lastWarmHost = host;
+            return content.replace(/^["']|["']$/g, '').slice(0, 320);
+        } catch (err) {
+            clearTimeout(timer);
+            throw err;
+        }
+    }
+
     private static async callOllamaWithFailover(
         messages: AiChatMessage[],
         lastUserText: string
     ): Promise<string> {
-        const total = this.hosts.length;
-        const startIdx = this.rrIndex % total;
-        this.rrIndex = (this.rrIndex + 1) % total;
+        // Order hosts with the last warm VRAM host first for ~1-2s replies
+        const ordered = this.lastWarmHost && this.hosts.includes(this.lastWarmHost)
+            ? [this.lastWarmHost, ...this.hosts.filter((h) => h !== this.lastWarmHost)]
+            : [...this.hosts.slice(this.rrIndex % this.hosts.length), ...this.hosts.slice(0, this.rrIndex % this.hosts.length)];
+        this.rrIndex = (this.rrIndex + 1) % this.hosts.length;
 
-        for (let attempt = 0; attempt < total; attempt++) {
-            const host = this.hosts[(startIdx + attempt) % total];
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 18000);
+        // 1. Fast path: hit warm host first (or race top 2 hosts concurrently if none warm yet)
+        if (this.lastWarmHost) {
             try {
-                const res = await fetch(`${host}/api/chat`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    signal: controller.signal,
-                    body: JSON.stringify({
-                        model: this.modelName,
-                        messages,
-                        stream: false,
-                        options: {
-                            temperature: 0.85,
-                            top_p: 0.9,
-                            num_predict: 90
-                        }
-                    })
-                });
-                clearTimeout(timer);
-                if (res.status === 404) {
-                    // Fallback to any installed chat model on this live host if gemma4:12b isn't pulled yet
-                    try {
-                        const tagsRes = await fetch(`${host}/api/tags`);
-                        if (tagsRes.ok) {
-                            const tagsData: any = await tagsRes.json();
-                            const available: string[] = (tagsData?.models || []).map((m: any) => String(m.name || '')).filter(Boolean);
-                            const altModel =
-                                available.find((m) => m.toLowerCase().includes('gemma')) ||
-                                available.find((m) => !m.toLowerCase().includes('embed')) ||
-                                available[0];
-                            if (altModel && altModel !== this.modelName) {
-                                const retry = await fetch(`${host}/api/chat`, {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({
-                                        model: altModel,
-                                        messages,
-                                        stream: false,
-                                        options: { temperature: 0.85, top_p: 0.9, num_predict: 90 }
-                                    })
-                                });
-                                if (retry.ok) {
-                                    const rData: any = await retry.json();
-                                    const rContent = (rData?.message?.content || '').toString().trim();
-                                    if (rContent) return rContent.replace(/^["']|["']$/g, '').slice(0, 320);
-                                }
-                            }
-                        }
-                    } catch {}
-                    continue;
-                }
-                if (!res.ok) continue;
-                const data: any = await res.json();
-                const content = (data?.message?.content || '').toString().trim();
-                if (content) {
-                    return content.replace(/^["']|["']$/g, '').slice(0, 320);
-                }
+                return await this.querySingleHost(ordered[0], messages, 9000);
             } catch {
-                clearTimeout(timer);
+                this.lastWarmHost = null;
             }
         }
 
-        // Graceful fallback if all labpc Ollama nodes are temporarily unreachable
-        return this.fallbackStudentReply(lastUserText);
+        // 2. Hedged parallel race across all lab hosts (first fast reply wins, 10s cap)
+        const candidates = ordered.slice(0, 4);
+        const firstFulfilled = <T>(promises: Promise<T>[]): Promise<T> =>
+            new Promise<T>((resolve, reject) => {
+                let remaining = promises.length;
+                if (remaining === 0) return reject(new Error('No hosts'));
+                for (const p of promises) {
+                    p.then(resolve, () => {
+                        remaining--;
+                        if (remaining === 0) reject(new Error('All hosts failed'));
+                    });
+                }
+            });
+        try {
+            return await firstFulfilled(candidates.map((h) => this.querySingleHost(h, messages, 10000)));
+        } catch {
+            // Graceful fallback if all labpc Ollama nodes are temporarily unreachable
+            return this.fallbackStudentReply(lastUserText);
+        }
     }
 
     private static fallbackStudentReply(userText: string): string {
