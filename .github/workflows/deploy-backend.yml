@@ -1,11 +1,10 @@
-name: Backend Server CI & Deploy
+name: Backend Server CI & Deploy (Azure App Service Free)
 
 on:
   push:
     branches: [backend, main]
     paths:
       - 'backend/**'
-      - 'docker-compose.yml'
       - '.github/workflows/deploy-backend.yml'
   workflow_dispatch:
 
@@ -23,23 +22,24 @@ jobs:
           cache: 'npm'
           cache-dependency-path: backend/package-lock.json
 
-      - name: Install & Build Backend
+      - name: Install, Type-Check & Build Backend
         working-directory: backend
         run: |
           npm ci
           npx tsc --noEmit
           npm run build
 
-      - name: Deploy to VM via SSH (when VM secrets are configured)
-        if: ${{ secrets.VM_HOST != '' && secrets.VM_USER != '' && secrets.VM_SSH_KEY != '' }}
-        uses: appleboy/ssh-action@v1.2.0
+      - name: Prepare Production Package
+        working-directory: backend
+        run: |
+          rm -rf node_modules
+          npm ci --omit=dev
+          zip -r ../backend-prod.zip dist package.json package-lock.json node_modules
+
+      - name: Deploy to Azure App Service (benchly-api-ewu)
+        if: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE != '' }}
+        uses: azure/webapps-deploy@v3
         with:
-          host: ${{ secrets.VM_HOST }}
-          username: ${{ secrets.VM_USER }}
-          key: ${{ secrets.VM_SSH_KEY }}
-          script: |
-            cd ~/benchly
-            git fetch origin
-            git checkout backend || git checkout main
-            git pull origin $(git rev-parse --abbrev-ref HEAD)
-            docker compose up -d --build
+          app-name: benchly-api-ewu
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: backend-prod.zip
