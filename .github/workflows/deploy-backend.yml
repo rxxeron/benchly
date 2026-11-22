@@ -13,10 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: 'npm'
@@ -37,7 +37,6 @@ jobs:
           zip -r ../backend-prod.zip dist package.json package-lock.json node_modules
 
       - name: Deploy to Azure App Service (benchly-api-ewu)
-        if: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE != '' }}
         uses: azure/webapps-deploy@v3
         with:
           app-name: benchly-api-ewu
