@@ -32,14 +32,18 @@
 
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.getRegistrations().then(function (regs) {
+        var removals = [];
         for (var i = 0; i < regs.length; i++) {
-          var url = (regs[i].active && regs[i].active.scriptURL) || '';
+          var sw = regs[i].active || regs[i].waiting || regs[i].installing;
+          var url = (sw && sw.scriptURL) || '';
           if (url.indexOf('flutter_service_worker.js') !== -1) {
-            regs[i].unregister();
+            removals.push(regs[i].unregister());
           }
         }
-        navigator.serviceWorker.register('/benchly-sw.js').catch(function () {});
-      });
+        return Promise.all(removals);
+      }).then(function () {
+        return navigator.serviceWorker.register('/benchly-sw.js');
+      }).catch(function () {});
     }
 
     function urlBase64ToUint8Array(base64String) {
