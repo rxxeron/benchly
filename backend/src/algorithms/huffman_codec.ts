@@ -7,6 +7,21 @@
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
 
+/**
+ * Symbol order used to break ties between equal-length canonical codes.
+ * - 'codepoint': plain UTF-16 code-unit comparison. Locale-independent and never returns 0
+ *   for distinct strings, so the codebook is identical no matter how codeLengths keys are
+ *   reordered (e.g. by PostgreSQL JSONB).
+ * - 'legacy-locale': String.localeCompare, used by archives written before symbolOrder existed.
+ *   It treats some distinct symbols (control chars, U+00AD, U+200D, U+FE0F) as equal, so it is
+ *   kept only to decode old rows.
+ */
+export type CanonicalSymbolOrder = 'codepoint' | 'legacy-locale';
+
+function compareCodePoints(a: string, b: string): number {
+    return a < b ? -1 : a > b ? 1 : 0;
+}
+
 interface HuffmanTreeNode {
     symbol: string | null;
     frequency: number;
@@ -41,7 +56,7 @@ class BinaryMinHeap {
 
     private compare(a: HuffmanTreeNode, b: HuffmanTreeNode): number {
         if (a.frequency !== b.frequency) return a.frequency - b.frequency;
-        return (a.symbol || '').localeCompare(b.symbol || '');
+        return compareCodePoints(a.symbol || '', b.symbol || '');
     }
 
     private siftUp(idx: number): void {
@@ -87,27 +102,45 @@ class BinaryMinHeap {
 export interface CompressedTranscriptMeta {
     originalLength: number;
     originalBytes: number;
+    /** Packed Huffman bitstream only. */
     compressedBytes: number;
+    /** Size of the codebook (JSON of codeLengths) that must be stored to decode. */
+    codebookBytes: number;
+    /** Net saving: (original - (bitstream + codebook)) / original. Negative when Huffman does not pay. */
     savingsPercent: number;
+    /** Bitstream-only saving (ignores the codebook); shown for comparison. */
+    payloadSavingsPercent: number;
     shannonEntropy: number;
     averageCodeLength: number;
     shannonVerified: boolean;
     distinctSymbols: number;
     codeLengths: Record<string, number>;
+    symbolOrder: CanonicalSymbolOrder;
     packedBase64: string;
 }
 
 export interface EncryptedHuffmanArchive {
     algorithm: 'canonical-huffman+aes-256-gcm';
+    /**
+     * 'huffman': ciphertext holds the packed bitstream. 'raw': Huffman would not have saved space
+     * (short chats, where the codebook outweighs the gain), so ciphertext holds UTF-8 JSON.
+     * Absent on older archives, which are always 'huffman'.
+     */
+    encoding?: 'huffman' | 'raw';
     originalLength: number;
     originalBytes: number;
     compressedBytes: number;
+    codebookBytes?: number;
+    /** Net saving including the codebook; 0 for 'raw'. Older archives stored the bitstream-only figure. */
     savingsPercent: number;
+    payloadSavingsPercent?: number;
     shannonEntropy: number;
     averageCodeLength: number;
     shannonVerified: boolean;
     distinctSymbols: number;
     codeLengths: Record<string, number>;
+    /** Absent on archives written before this field existed; those decode with 'legacy-locale'. */
+    symbolOrder?: CanonicalSymbolOrder;
     ivBase64: string;
     authTagBase64: string;
     ciphertextBase64: string;
@@ -125,7 +158,18 @@ export interface VisualHuffmanTreeNode {
 }
 
 export class CanonicalHuffmanCodec {
+    private static warnedAboutKey = false;
+
     private static deriveKey(secret?: string): Buffer {
+        if (!secret && !process.env.ARCHIVE_MASTER_KEY && !this.warnedAboutKey) {
+            this.warnedAboutKey = true;
+            // Do not change the fallback order: existing archives were sealed with it.
+            console.warn(
+                '⚠️ ARCHIVE_MASTER_KEY is not set; transcript archives fall back to ' +
+                    (process.env.SUPABASE_SERVICE_KEY ? 'SUPABASE_SERVICE_KEY' : 'a hard-coded dev key') +
+                    '. Rotating that value would make existing archives undecryptable.'
+            );
+        }
         const raw = secret || process.env.ARCHIVE_MASTER_KEY || process.env.SUPABASE_SERVICE_KEY || 'benchly-ephemeral-dev-key';
         return createHash('sha256').update(raw, 'utf8').digest();
     }
@@ -134,10 +178,16 @@ export class CanonicalHuffmanCodec {
      * Deterministically rebuilds canonical prefix codes from (symbol -> bitLength)
      * using the exact (bitLength ASC, symbol ASC) order.
      */
-    static buildCanonicalCodes(codeLengths: Record<string, number>): Record<string, string> {
+    static buildCanonicalCodes(
+        codeLengths: Record<string, number>,
+        symbolOrder: CanonicalSymbolOrder = 'codepoint'
+    ): Record<string, string> {
+        const tieBreak = symbolOrder === 'legacy-locale'
+            ? (a: string, b: string) => a.localeCompare(b)
+            : compareCodePoints;
         const sortedSyms = Object.keys(codeLengths).sort((a, b) => {
             const d = codeLengths[a] - codeLengths[b];
-            return d !== 0 ? d : a.localeCompare(b);
+            return d !== 0 ? d : tieBreak(a, b);
         });
         const canonicalCodes: Record<string, string> = {};
         if (sortedSyms.length === 0) return canonicalCodes;
@@ -172,12 +222,15 @@ export class CanonicalHuffmanCodec {
                 originalLength: 0,
                 originalBytes: 0,
                 compressedBytes: 0,
+                codebookBytes: 0,
                 savingsPercent: 0,
+                payloadSavingsPercent: 0,
                 shannonEntropy: 0,
                 averageCodeLength: 0,
                 shannonVerified: true,
                 distinctSymbols: 0,
                 codeLengths: {},
+                symbolOrder: 'codepoint',
                 packedBase64: ''
             };
         }
@@ -217,25 +270,8 @@ export class CanonicalHuffmanCodec {
         };
         extractDepth(root, 0);
 
-        // Canonical ordering: (bitLength ASC, symbol ASC)
-        const sortedSyms = Object.keys(codeLengths).sort((a, b) => {
-            const d = codeLengths[a] - codeLengths[b];
-            return d !== 0 ? d : a.localeCompare(b);
-        });
-
-        const canonicalCodes: Record<string, string> = {};
-        let codeVal = 0;
-        let prevLen = codeLengths[sortedSyms[0]];
-
-        for (let i = 0; i < sortedSyms.length; i++) {
-            const sym = sortedSyms[i];
-            const curLen = codeLengths[sym];
-            if (i > 0) {
-                codeVal = (codeVal + 1) << (curLen - prevLen);
-            }
-            canonicalCodes[sym] = codeVal.toString(2).padStart(curLen, '0');
-            prevLen = curLen;
-        }
+        // Canonical ordering: (bitLength ASC, symbol ASC by code point)
+        const canonicalCodes = this.buildCanonicalCodes(codeLengths, 'codepoint');
 
         // Pack bitstream into bytes
         const bitChunks: string[] = [];
@@ -263,20 +299,25 @@ export class CanonicalHuffmanCodec {
 
         const originalBytes = Buffer.byteLength(input, 'utf8');
         const compressedBytes = byteBuffer.length;
-        const savingsPercent = originalBytes > 0
-            ? Number((((originalBytes - compressedBytes) / originalBytes) * 100).toFixed(2))
-            : 0;
+        const codebookBytes = Buffer.byteLength(JSON.stringify(codeLengths), 'utf8');
+        const pct = (saved: number) =>
+            originalBytes > 0 ? Number(((saved / originalBytes) * 100).toFixed(2)) : 0;
+        const savingsPercent = pct(originalBytes - compressedBytes - codebookBytes);
+        const payloadSavingsPercent = pct(originalBytes - compressedBytes);
 
         return {
             originalLength: chars.length,
             originalBytes,
             compressedBytes,
-            savingsPercent: Math.max(0, savingsPercent),
+            codebookBytes,
+            savingsPercent,
+            payloadSavingsPercent,
             shannonEntropy: Number(entropy.toFixed(4)),
             averageCodeLength: Number(avgLen.toFixed(4)),
             shannonVerified: avgLen + 1e-9 >= entropy && avgLen < entropy + 1.0,
             distinctSymbols: symbols.length,
             codeLengths,
+            symbolOrder: 'codepoint',
             packedBase64: byteBuffer.toString('base64')
         };
     }
@@ -288,10 +329,11 @@ export class CanonicalHuffmanCodec {
     static decompressTranscriptJson(
         packedBase64: string,
         codeLengths: Record<string, number>,
-        originalLength: number
+        originalLength: number,
+        symbolOrder: CanonicalSymbolOrder = 'codepoint'
     ): string {
         if (!packedBase64 || originalLength <= 0) return '';
-        const canonicalCodes = this.buildCanonicalCodes(codeLengths);
+        const canonicalCodes = this.buildCanonicalCodes(codeLengths, symbolOrder);
 
         interface DecodeNode {
             symbol: string | null;
@@ -339,24 +381,32 @@ export class CanonicalHuffmanCodec {
      */
     static sealEncryptedHuffmanArchive(rawJson: string, secret?: string): EncryptedHuffmanArchive {
         const compressed = this.compressTranscriptJson(rawJson);
+        // Store raw when bitstream + codebook would be no smaller than the original.
+        const useHuffman = compressed.savingsPercent > 0;
         const key = this.deriveKey(secret);
         const iv = randomBytes(12); // 96-bit NIST-recommended GCM IV
         const cipher = createCipheriv('aes-256-gcm', key, iv);
-        const rawPacked = Buffer.from(compressed.packedBase64, 'base64');
-        const encrypted = Buffer.concat([cipher.update(rawPacked), cipher.final()]);
+        const plain = useHuffman
+            ? Buffer.from(compressed.packedBase64, 'base64')
+            : Buffer.from((rawJson || '[]').replace(/\u0000/g, ''), 'utf8');
+        const encrypted = Buffer.concat([cipher.update(plain), cipher.final()]);
         const authTag = cipher.getAuthTag();
 
         return {
             algorithm: 'canonical-huffman+aes-256-gcm',
+            encoding: useHuffman ? 'huffman' : 'raw',
             originalLength: compressed.originalLength,
             originalBytes: compressed.originalBytes,
-            compressedBytes: compressed.compressedBytes,
-            savingsPercent: compressed.savingsPercent,
+            compressedBytes: useHuffman ? compressed.compressedBytes : compressed.originalBytes,
+            codebookBytes: useHuffman ? compressed.codebookBytes : 0,
+            savingsPercent: useHuffman ? compressed.savingsPercent : 0,
+            payloadSavingsPercent: compressed.payloadSavingsPercent,
             shannonEntropy: compressed.shannonEntropy,
             averageCodeLength: compressed.averageCodeLength,
             shannonVerified: compressed.shannonVerified,
             distinctSymbols: compressed.distinctSymbols,
             codeLengths: compressed.codeLengths,
+            symbolOrder: compressed.symbolOrder,
             ivBase64: iv.toString('base64'),
             authTagBase64: authTag.toString('base64'),
             ciphertextBase64: encrypted.toString('base64')
@@ -376,11 +426,13 @@ export class CanonicalHuffmanCodec {
         const decipher = createDecipheriv('aes-256-gcm', key, iv);
         decipher.setAuthTag(authTag);
         const decryptedPacked = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+        if (archive.encoding === 'raw') return decryptedPacked.toString('utf8');
 
         return this.decompressTranscriptJson(
             decryptedPacked.toString('base64'),
             archive.codeLengths,
-            archive.originalLength
+            archive.originalLength,
+            archive.symbolOrder ?? 'legacy-locale'
         );
     }
 
@@ -390,17 +442,19 @@ export class CanonicalHuffmanCodec {
      */
     static buildVisualHuffmanTree(
         codeLengths: Record<string, number>,
-        rawTextForFreq?: string
+        rawTextForFreq?: string,
+        symbolOrder: CanonicalSymbolOrder = 'codepoint'
     ): {
         tree: VisualHuffmanTreeNode;
         canonicalCodes: Record<string, string>;
         symbolFrequencies: Record<string, number>;
     } {
-        const canonicalCodes = this.buildCanonicalCodes(codeLengths);
+        const canonicalCodes = this.buildCanonicalCodes(codeLengths, symbolOrder);
         const symbolFrequencies: Record<string, number> = {};
         if (rawTextForFreq) {
-            for (let i = 0; i < rawTextForFreq.length; i++) {
-                const ch = rawTextForFreq[i];
+            // Count by full code points, matching how compressTranscriptJson splits symbols
+            // (indexing by UTF-16 unit would split emoji into lone surrogates).
+            for (const ch of rawTextForFreq) {
                 symbolFrequencies[ch] = (symbolFrequencies[ch] || 0) + 1;
             }
         }

@@ -1,6 +1,6 @@
 import express from 'express';
 import type { AdminHelpers, AdminRoutesDeps } from './helpers';
-import { CanonicalHuffmanCodec, EncryptedHuffmanArchive } from '../../algorithms/huffman_codec';
+import { CanonicalHuffmanCodec, CanonicalSymbolOrder, EncryptedHuffmanArchive } from '../../algorithms/huffman_codec';
 
 export function registerAdminModerationRoutes(
     app: express.Express,
@@ -65,6 +65,7 @@ export function registerAdminModerationRoutes(
             let rawTranscriptJson = '';
             let messages: any[] = [];
             let codeLengths: Record<string, number> = {};
+            let symbolOrder: CanonicalSymbolOrder = 'codepoint';
             let stats: any = {};
 
             const meta = row.huffman_meta as EncryptedHuffmanArchive | null;
@@ -72,11 +73,17 @@ export function registerAdminModerationRoutes(
                 rawTranscriptJson = CanonicalHuffmanCodec.openEncryptedHuffmanArchive(meta);
                 messages = JSON.parse(rawTranscriptJson || '[]');
                 codeLengths = meta.codeLengths || {};
+                symbolOrder = meta.symbolOrder ?? 'legacy-locale';
                 stats = {
                     algorithm: meta.algorithm,
+                    encoding: meta.encoding ?? 'huffman',
                     originalBytes: meta.originalBytes,
                     compressedBytes: meta.compressedBytes,
+                    codebookBytes: meta.codebookBytes ?? Buffer.byteLength(JSON.stringify(codeLengths), 'utf8'),
                     savingsPercent: meta.savingsPercent,
+                    // Archives written before codebookBytes existed stored the bitstream-only saving.
+                    savingsIncludesCodebook: meta.codebookBytes !== undefined,
+                    payloadSavingsPercent: meta.payloadSavingsPercent,
                     shannonEntropy: meta.shannonEntropy,
                     averageCodeLength: meta.averageCodeLength,
                     shannonVerified: meta.shannonVerified,
@@ -87,11 +94,16 @@ export function registerAdminModerationRoutes(
                 rawTranscriptJson = JSON.stringify(messages);
                 const liveCompressed = CanonicalHuffmanCodec.compressTranscriptJson(rawTranscriptJson);
                 codeLengths = liveCompressed.codeLengths;
+                symbolOrder = liveCompressed.symbolOrder;
                 stats = {
                     algorithm: 'legacy-plaintext (computed-on-fly-huffman)',
+                    encoding: 'huffman',
                     originalBytes: liveCompressed.originalBytes,
                     compressedBytes: liveCompressed.compressedBytes,
+                    codebookBytes: liveCompressed.codebookBytes,
                     savingsPercent: liveCompressed.savingsPercent,
+                    savingsIncludesCodebook: true,
+                    payloadSavingsPercent: liveCompressed.payloadSavingsPercent,
                     shannonEntropy: liveCompressed.shannonEntropy,
                     averageCodeLength: liveCompressed.averageCodeLength,
                     shannonVerified: liveCompressed.shannonVerified,
@@ -99,7 +111,7 @@ export function registerAdminModerationRoutes(
                 };
             }
 
-            const visual = CanonicalHuffmanCodec.buildVisualHuffmanTree(codeLengths, rawTranscriptJson);
+            const visual = CanonicalHuffmanCodec.buildVisualHuffmanTree(codeLengths, rawTranscriptJson, symbolOrder);
             return res.json({
                 roomId: row.room_id,
                 user1Alias: row.user1_alias,

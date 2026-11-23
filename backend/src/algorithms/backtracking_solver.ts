@@ -146,7 +146,9 @@ export class BenchlyBacktrackingEngine {
             for (let i = startIdx; i < cappedN; i++) {
                 if (!used[i]) sum += maxIncident[i];
             }
-            return Math.floor(sum / 2);
+            // Each matched pair (u, v) has w <= (maxIncident[u] + maxIncident[v]) / 2.
+            // No floor: flooring under-estimates the bound for fractional weights and prunes optimal branches.
+            return sum / 2;
         };
 
         const dfs = (u: number, currentWeight: number): void => {

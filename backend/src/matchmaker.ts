@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { UserProfile } from './types';
 import { InMemoryRedisAdapter } from './in_memory_redis';
 import { BenchlyBacktrackingEngine, ConflictStudent } from './algorithms/backtracking_solver';
+import { BatchCandidate, BatchMatchResult, MatchEdge, mutuallyCompatible, solveBatchMatching } from './algorithms/batch_matcher';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -76,15 +77,28 @@ export function computeLiveCompatibilityScore(
     return Math.max(1, score);
 }
 
+const ALL_1V1_QUEUES = [
+    'queue:any:seeking:any',
+    'queue:male:seeking:any',
+    'queue:female:seeking:any',
+    'queue:male:seeking:female',
+    'queue:female:seeking:male',
+    'queue:male:seeking:male',
+    'queue:female:seeking:female'
+];
+
+/** Waiting metadata lives for 3 minutes; the AI fallback normally takes over long before. */
+const WAITING_TTL_SEC = 180;
+
 /**
- * Handles 1v1 matchmaking with Maximum-Compatibility Graph Scoring over live Redis queues.
+ * Step 1 of 1v1 matchmaking: put the student in the waiting pool.
+ * Matching itself happens in runBatchMatchTick(), which solves the whole pool at once.
  */
-export async function findOrCreate1v1Match(
+export async function enqueue1v1(
     user: UserProfile,
     seekingInput: string,
     matchMode: string = 'campus_adda'
-): Promise<{ roomId: string | null; matchedUser: string | null; compatibilityScore?: number }> {
-    // Check if user is on cooldown
+): Promise<void> {
     const onCooldown = await redis.get(`cooldown:${user.id}`);
     if (onCooldown) {
         const ttl = await redis.ttl(`cooldown:${user.id}`);
@@ -93,7 +107,6 @@ export async function findOrCreate1v1Match(
 
     const seeking = normalizeSeeking(seekingInput);
     const userGender = (user.gender || 'male').toLowerCase();
-
     const myMeta: WaitingCandidateMeta = {
         id: user.id,
         alias: user.alias || 'Anonymous Student',
@@ -105,110 +118,136 @@ export async function findOrCreate1v1Match(
         joinedAt: Date.now()
     };
 
-    // Determine compatible candidate queues to search in priority order
-    const candidateQueues: string[] = [];
-
-    if (seeking === 'any') {
-        candidateQueues.push('queue:any:seeking:any');
-        candidateQueues.push(userGender === 'male' ? 'queue:female:seeking:any' : 'queue:male:seeking:any');
-        candidateQueues.push(userGender === 'male' ? 'queue:female:seeking:male' : 'queue:male:seeking:female');
-        candidateQueues.push(userGender === 'male' ? 'queue:male:seeking:any' : 'queue:female:seeking:any');
-    } else if (seeking === 'female') {
-        candidateQueues.push(`queue:female:seeking:${userGender}`);
-        candidateQueues.push('queue:female:seeking:any');
-    } else if (seeking === 'male') {
-        candidateQueues.push(`queue:male:seeking:${userGender}`);
-        candidateQueues.push('queue:male:seeking:any');
-    }
-
-    const recentRaw = await redis.smembers(`recent_partners:${user.id}`).catch(() => [] as string[]);
-    const recentPartners = new Set<string>(recentRaw);
-
-    let bestCandidateId: string | null = null;
-    let bestQueueName: string | null = null;
-    let bestScore = -1;
-
-    // Inspect all waiting candidates across compatible queues and pick maximum compatibility edge
-    for (const queueName of candidateQueues) {
-        const waitingIds = await redis.lrange(queueName, 0, -1);
-        for (const candidateId of waitingIds) {
-            if (!candidateId || candidateId === user.id) continue;
-
-            const rawMeta = await redis.get(`waiting_meta:${candidateId}`);
-            let candMeta: WaitingCandidateMeta;
-            if (rawMeta) {
-                try {
-                    candMeta = JSON.parse(rawMeta);
-                } catch {
-                    candMeta = {
-                        id: candidateId,
-                        alias: 'EWU Student',
-                        dept: 'CSE',
-                        batchYear: '2024',
-                        gender: 'any',
-                        seeking: 'any',
-                        mode: 'campus_adda',
-                        joinedAt: Date.now() - 10000
-                    };
-                }
-            } else {
-                candMeta = {
-                    id: candidateId,
-                    alias: 'EWU Student',
-                    dept: 'CSE',
-                    batchYear: '2024',
-                    gender: 'any',
-                    seeking: 'any',
-                    mode: 'campus_adda',
-                    joinedAt: Date.now() - 10000
-                };
-            }
-
-            const score = computeLiveCompatibilityScore(myMeta, candMeta, recentPartners);
-            if (score > bestScore) {
-                bestScore = score;
-                bestCandidateId = candidateId;
-                bestQueueName = queueName;
-            }
-        }
-    }
-
-    if (bestCandidateId && bestQueueName) {
-        const removed = await redis.lrem(bestQueueName, 1, bestCandidateId);
-        if (removed > 0) {
-            const roomId = randomUUID();
-            const roomData = {
-                users: JSON.stringify([user.id, bestCandidateId]),
-                mode: matchMode,
-                compatibilityScore: bestScore.toString(),
-                createdAt: Date.now()
-            };
-            await redis.hset(`room:${roomId}`, roomData);
-            await redis.expire(`room:${roomId}`, 1800);
-
-            // Track recent partners for 2 hours to maximize campus variety
-            await redis.sadd(`recent_partners:${user.id}`, bestCandidateId);
-            await redis.expire(`recent_partners:${user.id}`, 7200);
-            await redis.sadd(`recent_partners:${bestCandidateId}`, user.id);
-            await redis.expire(`recent_partners:${bestCandidateId}`, 7200);
-
-            await removeUserFromQueues(bestCandidateId);
-            await removeUserFromQueues(user.id);
-
-            return { roomId, matchedUser: bestCandidateId, compatibilityScore: bestScore };
-        }
-    }
-
-    // No match found immediately — store live metadata & push to wait queue
-    const waitQueue = seeking === 'any'
-        ? `queue:${userGender}:seeking:any`
-        : `queue:${userGender}:seeking:${seeking}`;
-
-    await redis.set(`waiting_meta:${user.id}`, JSON.stringify(myMeta), 'EX', 180);
+    const waitQueue = `queue:${userGender}:seeking:${seeking}`;
+    await redis.set(`waiting_meta:${user.id}`, JSON.stringify(myMeta), 'EX', WAITING_TTL_SEC);
     await redis.rpush(waitQueue, user.id);
-    await redis.expire(waitQueue, 180);
+    await redis.expire(waitQueue, WAITING_TTL_SEC);
+}
 
-    return { roomId: null, matchedUser: null };
+export interface BatchMatchedPair {
+    a: WaitingCandidateMeta; // joined first -> room "creator"
+    b: WaitingCandidateMeta;
+    score: number;
+}
+
+export interface BatchTickReport {
+    at: number;
+    poolSize: number;
+    pairs: BatchMatchedPair[];
+    result: BatchMatchResult | null;
+}
+
+/**
+ * Step 2: one batch tick. Reads every waiting student, builds the compatibility graph and solves
+ * it with solveBatchMatching (DSU components -> Branch-and-Bound / Edmonds-Karp / greedy).
+ * Returns the pairs that were successfully claimed from the queues.
+ */
+export async function runBatchMatchTick(): Promise<BatchTickReport> {
+    const at = Date.now();
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    for (const q of ALL_1V1_QUEUES) {
+        const members: string[] = await redis.lrange(q, 0, -1).catch(() => [] as string[]);
+        for (const id of members) {
+            if (id && !seen.has(id)) {
+                seen.add(id);
+                ids.push(id);
+            }
+        }
+    }
+    if (ids.length < 2) return { at, poolSize: ids.length, pairs: [], result: null };
+
+    const pool: WaitingCandidateMeta[] = [];
+    for (const id of ids) {
+        const raw = await redis.get(`waiting_meta:${id}`);
+        if (!raw) continue; // expired: ignore, the queue entry expires too
+        try {
+            const meta = JSON.parse(raw) as WaitingCandidateMeta;
+            pool.push({ ...meta, seeking: normalizeSeeking(meta.seeking) });
+        } catch {
+            /* skip corrupt meta */
+        }
+    }
+    if (pool.length < 2) return { at, poolSize: pool.length, pairs: [], result: null };
+
+    const recent = new Map<string, Set<string>>();
+    for (const m of pool) {
+        const r: string[] = await redis.smembers(`recent_partners:${m.id}`).catch(() => [] as string[]);
+        recent.set(m.id, new Set(r));
+    }
+
+    const candidates: BatchCandidate[] = pool.map(m => ({
+        id: m.id,
+        gender: m.gender,
+        seeking: normalizeSeeking(m.seeking)
+    }));
+    const edges: MatchEdge[] = [];
+    for (let i = 0; i < pool.length; i++) {
+        for (let j = i + 1; j < pool.length; j++) {
+            if (!mutuallyCompatible(candidates[i], candidates[j])) continue;
+            const wij = computeLiveCompatibilityScore(pool[i], pool[j], recent.get(pool[i].id)!);
+            const wji = computeLiveCompatibilityScore(pool[j], pool[i], recent.get(pool[j].id)!);
+            edges.push({ u: i, v: j, w: Math.round((wij + wji) / 2) });
+        }
+    }
+
+    const result = solveBatchMatching(pool.length, edges);
+    const claimed: BatchMatchedPair[] = [];
+    for (const p of result.pairs) {
+        const [a, b] = pool[p.u].joinedAt <= pool[p.v].joinedAt ? [pool[p.u], pool[p.v]] : [pool[p.v], pool[p.u]];
+        if (await claimPair(a.id, b.id)) claimed.push({ a, b, score: p.w });
+    }
+    return { at, poolSize: pool.length, pairs: claimed, result };
+}
+
+/** Removes userId from every 1v1 queue; returns how many entries were removed. */
+async function removeFromQueuesCount(userId: string): Promise<number> {
+    let removed = 0;
+    for (const q of ALL_1V1_QUEUES) {
+        removed += Number(await redis.lrem(q, 0, userId).catch(() => 0)) || 0;
+    }
+    return removed;
+}
+
+/**
+ * Takes both students out of the waiting pool. If the second one already left (cancelled,
+ * disconnected, or the AI fallback took them), the first is put back so they stay in the pool.
+ */
+async function claimPair(aId: string, bId: string): Promise<boolean> {
+    const metaA = await redis.get(`waiting_meta:${aId}`);
+    if ((await removeFromQueuesCount(aId)) === 0) return false;
+    if ((await removeFromQueuesCount(bId)) === 0) {
+        if (metaA) {
+            try {
+                const m = JSON.parse(metaA) as WaitingCandidateMeta;
+                await redis.rpush(`queue:${m.gender}:seeking:${normalizeSeeking(m.seeking)}`, aId);
+            } catch {
+                /* meta unreadable: A re-queues on their next search */
+            }
+        }
+        return false;
+    }
+    await redis.del(`waiting_meta:${aId}`, `waiting_meta:${bId}`).catch(() => {});
+    return true;
+}
+
+/** Creates the Redis room for a matched pair and records them as recent partners. */
+export async function createMatchedRoom(aId: string, bId: string, mode: string, score: number): Promise<string> {
+    const roomId = randomUUID();
+    await redis.hset(`room:${roomId}`, {
+        users: JSON.stringify([aId, bId]),
+        mode,
+        compatibilityScore: score.toString(),
+        createdAt: Date.now()
+    });
+    await redis.expire(`room:${roomId}`, 1800);
+
+    // Track recent partners for 2 hours to maximize campus variety
+    await redis.sadd(`recent_partners:${aId}`, bId);
+    await redis.expire(`recent_partners:${aId}`, 7200);
+    await redis.sadd(`recent_partners:${bId}`, aId);
+    await redis.expire(`recent_partners:${bId}`, 7200);
+    return roomId;
 }
 
 /**
@@ -277,20 +316,11 @@ export async function joinOrCreateGroupLounge(
     };
 }
 
-export async function removeUserFromQueues(userId: string) {
-    const allQueues = [
-        'queue:any:seeking:any',
-        'queue:male:seeking:any',
-        'queue:female:seeking:any',
-        'queue:male:seeking:female',
-        'queue:female:seeking:male',
-        'queue:male:seeking:male',
-        'queue:female:seeking:female'
-    ];
-    for (const q of allQueues) {
-        await redis.lrem(q, 0, userId).catch(() => {});
-    }
+/** Returns the number of queue entries removed (0 means the student was no longer waiting). */
+export async function removeUserFromQueues(userId: string): Promise<number> {
+    const removed = await removeFromQueuesCount(userId);
     await redis.del(`waiting_meta:${userId}`).catch(() => {});
+    return removed;
 }
 
 export async function applyCooldown(userId: string) {

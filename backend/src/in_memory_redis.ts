@@ -91,6 +91,21 @@ export class InMemoryRedisAdapter {
         return list.length;
     }
 
+    async lpush(key: string, ...vals: string[]): Promise<number> {
+        const list = this.lists.get(key) || [];
+        // Redis LPUSH inserts each value at the head in argument order
+        for (const v of vals) list.unshift(v);
+        this.lists.set(key, list);
+        return list.length;
+    }
+
+    async ltrim(key: string, start: number, stop: number): Promise<'OK'> {
+        const list = this.lists.get(key) || [];
+        const end = stop === -1 ? list.length : stop + 1;
+        this.lists.set(key, list.slice(start, end));
+        return 'OK';
+    }
+
     async lpop(key: string): Promise<string | null> {
         const list = this.lists.get(key);
         if (!list || list.length === 0) return null;

@@ -9,7 +9,7 @@ import { getRandomIcebreaker } from '../ewu_helper';
 import { generateServerNickname } from '../nickname_engine';
 import { WebPushService } from '../push_service';
 import { CHAT_DURATION_MS, CHAT_WARNING_MS, DISCONNECT_GRACE_MS, SocketState } from './state';
-import { registerMatchmakingHandlers } from './matchmaking_handlers';
+import { registerMatchmakingHandlers, startBatchMatchLoop } from './matchmaking_handlers';
 import { registerGameHandlers } from './game_handlers';
 import { registerChatHandlers } from './chat_handlers';
 
@@ -30,6 +30,8 @@ export function registerSocketGateway(
         queueTimeouts,
         saveRoomSession
     } = state;
+
+    startBatchMatchLoop(io, state, analytics, redis);
 
     io.on('connection', async (socket) => {
         await analytics.trackUserConnect(socket.id);

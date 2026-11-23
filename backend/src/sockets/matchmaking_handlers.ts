@@ -2,7 +2,15 @@ import type { Server, Socket } from 'socket.io';
 import { randomUUID } from 'crypto';
 import type Redis from 'ioredis';
 import type { AnalyticsEngine } from '../analytics';
-import { findOrCreate1v1Match, joinOrCreateGroupLounge, applyCooldown, removeUserFromQueues } from '../matchmaker';
+import {
+    enqueue1v1,
+    joinOrCreateGroupLounge,
+    applyCooldown,
+    removeUserFromQueues,
+    runBatchMatchTick,
+    createMatchedRoom,
+    BatchMatchedPair
+} from '../matchmaker';
 import { getRandomIcebreaker } from '../ewu_helper';
 import { AiCampusCompanionEngine } from '../ai_campus_companion';
 import { supabase } from '../supabase';
@@ -41,89 +49,9 @@ export function registerMatchmakingHandlers(
 
         try {
             await removeUserFromQueues(user.id);
-            const match = await findOrCreate1v1Match(user, seeking, matchMode);
-
-            if (match.roomId) {
-                const icebreaker = getRandomIcebreaker();
-                socket.join(match.roomId);
-
-                const otherSocketId = userSocketMap.get(match.matchedUser!);
-                const otherSocket = otherSocketId ? io.sockets.sockets.get(otherSocketId) : null;
-                if (otherSocket) otherSocket.join(match.roomId);
-                const otherProfile = otherSocketId ? activeUsers.get(otherSocketId) : null;
-
-                socket.emit('match_found', {
-                    roomId: match.roomId,
-                    role: 'creator',
-                    icebreaker,
-                    partnerAlias: otherProfile?.alias || 'Anonymous Student',
-                    partnerBadge: 'EWU Student'
-                });
-
-                const joinerPayload = {
-                    roomId: match.roomId,
-                    role: 'joiner',
-                    icebreaker,
-                    partnerAlias: user.alias || 'Anonymous Student',
-                    partnerBadge: 'EWU Student'
-                };
-                io.to(match.matchedUser!).emit('match_found', joinerPayload);
-                if (otherSocketId) io.to(otherSocketId).emit('match_found', joinerPayload);
-                WebPushService.sendToUser(supabase, match.matchedUser!, {
-                    title: '🪑 Bench Match Found!',
-                    body: `Paired with ${user.alias || 'an EWU classmate'} — tap to start chatting!`,
-                    tag: 'match_found'
-                }).catch(() => {});
-
-                const tCreator = queueTimeouts.get(socket.id);
-                if (tCreator) {
-                    clearTimeout(tCreator);
-                    queueTimeouts.delete(socket.id);
-                }
-                if (otherSocketId) {
-                    const tJoiner = queueTimeouts.get(otherSocketId);
-                    if (tJoiner) {
-                        clearTimeout(tJoiner);
-                        queueTimeouts.delete(otherSocketId);
-                    }
-                }
-
-                roomMembers.set(match.roomId, {
-                    user1: user.id,
-                    user2: match.matchedUser!,
-                    user1Alias: user.alias || 'Anonymous Student',
-                    user2Alias: otherProfile?.alias || 'Anonymous Student',
-                    startTime: Date.now(),
-                    user1Messages: 0,
-                    user2Messages: 0
-                });
-
-                analytics.recordEvent('match_created', user.dept_code, user.batch_year, 0, { seeking });
-
-                const warningTimeout = setTimeout(() => {
-                    io.to(match.roomId!).emit('chat_ending_soon');
-                }, CHAT_WARNING_MS);
-
-                const closeTimeout = setTimeout(async () => {
-                    io.to(match.roomId!).emit('chat_closed');
-                    io.in(match.roomId!).socketsLeave(match.roomId!);
-
-                    await saveRoomSession(match.roomId!);
-
-                    const durationSec = Math.round(
-                        (Date.now() - (roomMembers.get(match.roomId!)?.startTime || Date.now())) / 1000
-                    );
-                    analytics.recordEvent('chat_completed', user.dept_code, user.batch_year, durationSec);
-
-                    applyCooldown(user.id);
-                    applyCooldown(match.matchedUser!);
-                    roomTimeouts.delete(match.roomId!);
-                    roomMembers.delete(match.roomId!);
-                    handshakeVotes.delete(match.roomId!);
-                }, CHAT_DURATION_MS);
-
-                roomTimeouts.set(match.roomId, [warningTimeout, closeTimeout]);
-            } else {
+            await enqueue1v1(user, seeking, matchMode);
+            {
+                // Matching happens in the batch loop (startBatchMatchLoop); until then the student waits.
                 socket.emit('waiting_in_queue');
                 socket.join(user.id);
 
@@ -136,7 +64,8 @@ export function registerMatchmakingHandlers(
                         await removeUserFromQueues(user.id);
                         return;
                     }
-                    await removeUserFromQueues(user.id);
+                    // 0 removed = the batch matcher already claimed this student for a human match.
+                    if ((await removeUserFromQueues(user.id)) === 0) return;
 
                     const aiRoomId = randomUUID();
                     const icebreaker = getRandomIcebreaker();
@@ -274,4 +203,137 @@ export function registerMatchmakingHandlers(
             if (callback) callback({ success: false, error: err.message });
         }
     });
+}
+
+/** How often the waiting pool is solved as one batch. Adds at most this much latency to a match. */
+export const BATCH_WINDOW_MS = Math.max(500, parseInt(process.env.MATCH_BATCH_WINDOW_MS || '1500', 10) || 1500);
+
+/** Last ticks that had at least two students waiting; shown in the admin Algorithms tab. */
+export const BATCH_STATS_KEY = 'algo:batch_match_ticks';
+
+/**
+ * Runs runBatchMatchTick() every BATCH_WINDOW_MS (never overlapping) and starts a chat room for
+ * every pair it returns. Call once per server process.
+ */
+export function startBatchMatchLoop(io: Server, state: SocketState, analytics: AnalyticsEngine, redis: Redis) {
+    let running = false;
+    const timer = setInterval(async () => {
+        if (running) return;
+        running = true;
+        try {
+            const report = await runBatchMatchTick();
+            for (const pair of report.pairs) {
+                await startHumanRoom(io, state, analytics, pair).catch(err =>
+                    console.error('Failed to start matched room:', err)
+                );
+            }
+            if (report.result) {
+                const r = report.result;
+                await redis.lpush(
+                    BATCH_STATS_KEY,
+                    JSON.stringify({
+                        at: report.at,
+                        poolSize: report.poolSize,
+                        matchedStudents: report.pairs.length * 2,
+                        solverMatchedStudents: r.matchedStudents,
+                        solverWeight: r.totalWeight,
+                        greedyMatchedStudents: r.greedyMatchedStudents,
+                        greedyWeight: r.greedyTotalWeight,
+                        components: r.components
+                    })
+                );
+                await redis.ltrim(BATCH_STATS_KEY, 0, 49);
+            }
+        } catch (err) {
+            console.error('Batch match tick failed:', err);
+        } finally {
+            running = false;
+        }
+    }, BATCH_WINDOW_MS);
+    timer.unref?.();
+    return timer;
+}
+
+/** Creates the room for a matched pair, notifies both students and arms the chat timers. */
+async function startHumanRoom(io: Server, state: SocketState, analytics: AnalyticsEngine, pair: BatchMatchedPair) {
+    const { activeUsers, userSocketMap, roomTimeouts, roomMembers, handshakeVotes, queueTimeouts, saveRoomSession } = state;
+    const { a, b, score } = pair;
+
+    const roomId = await createMatchedRoom(a.id, b.id, a.mode || 'campus_adda', score);
+    const icebreaker = getRandomIcebreaker();
+    const socketA = userSocketMap.get(a.id);
+    const socketB = userSocketMap.get(b.id);
+    const profileA = socketA ? activeUsers.get(socketA) : null;
+    const profileB = socketB ? activeUsers.get(socketB) : null;
+    const aliasA = profileA?.alias || a.alias || 'Anonymous Student';
+    const aliasB = profileB?.alias || b.alias || 'Anonymous Student';
+
+    for (const sid of [socketA, socketB]) {
+        if (!sid) continue;
+        io.sockets.sockets.get(sid)?.join(roomId);
+        const t = queueTimeouts.get(sid);
+        if (t) {
+            clearTimeout(t);
+            queueTimeouts.delete(sid);
+        }
+    }
+
+    const emitTo = (userId: string, sid: string | undefined, payload: any) => {
+        if (sid) io.to(sid).emit('match_found', payload);
+        else io.to(userId).emit('match_found', payload);
+    };
+    emitTo(a.id, socketA, {
+        roomId,
+        role: 'creator',
+        icebreaker,
+        partnerAlias: aliasB,
+        partnerBadge: 'EWU Student',
+        compatibilityScore: score
+    });
+    emitTo(b.id, socketB, {
+        roomId,
+        role: 'joiner',
+        icebreaker,
+        partnerAlias: aliasA,
+        partnerBadge: 'EWU Student',
+        compatibilityScore: score
+    });
+    for (const [uid, partnerAlias] of [[a.id, aliasB], [b.id, aliasA]] as const) {
+        WebPushService.sendToUser(supabase, uid, {
+            title: '🪑 Bench Match Found!',
+            body: `Paired with ${partnerAlias} — tap to start chatting!`,
+            tag: 'match_found'
+        }).catch(() => {});
+    }
+
+    roomMembers.set(roomId, {
+        user1: a.id,
+        user2: b.id,
+        user1Alias: aliasA,
+        user2Alias: aliasB,
+        startTime: Date.now(),
+        user1Messages: 0,
+        user2Messages: 0
+    });
+
+    analytics.recordEvent('match_created', a.dept, a.batchYear, 0, { seeking: a.seeking, batch: true, score });
+
+    const warningTimeout = setTimeout(() => {
+        io.to(roomId).emit('chat_ending_soon');
+    }, CHAT_WARNING_MS);
+
+    const closeTimeout = setTimeout(async () => {
+        io.to(roomId).emit('chat_closed');
+        io.in(roomId).socketsLeave(roomId);
+        await saveRoomSession(roomId);
+        const durationSec = Math.round((Date.now() - (roomMembers.get(roomId)?.startTime || Date.now())) / 1000);
+        analytics.recordEvent('chat_completed', a.dept, a.batchYear, durationSec);
+        applyCooldown(a.id);
+        applyCooldown(b.id);
+        roomTimeouts.delete(roomId);
+        roomMembers.delete(roomId);
+        handshakeVotes.delete(roomId);
+    }, CHAT_DURATION_MS);
+
+    roomTimeouts.set(roomId, [warningTimeout, closeTimeout]);
 }

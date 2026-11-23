@@ -1,7 +1,10 @@
 import express from 'express';
 import type { AdminHelpers, AdminRoutesDeps } from './helpers';
 import { BenchlyPiiShield } from '../../algorithms/pii_shield_engine';
-import { StonesKnapsackCoinEngine } from '../../algorithms/stones_knapsack_coin_dp';
+import { StonesKnapsackCoinEngine, MAX_STONES_BUDGET } from '../../algorithms/stones_knapsack_coin_dp';
+import { MatchEdge, greedyMatching, solveBatchMatching } from '../../algorithms/batch_matcher';
+import { lcsMemo } from '../../algorithms/sequence_dp';
+import { BATCH_STATS_KEY, BATCH_WINDOW_MS } from '../../sockets/matchmaking_handlers';
 import { BenchlyBacktrackingEngine } from '../../algorithms/backtracking_solver';
 import { AiCampusCompanionEngine } from '../../ai_campus_companion';
 
@@ -180,8 +183,14 @@ export function registerAdminAnalyticsRoutes(
         const admin = await requireAdmin(req, res);
         if (!admin) return;
         try {
-            const walletStones = Math.max(0, Math.min(100, parseInt((req.query.stones as string) || '13', 10) || 13));
-            const targetGoal = Math.max(1, Math.min(100, parseInt((req.query.target as string) || '12', 10) || 12));
+            const walletStones = Math.max(
+                0,
+                Math.min(MAX_STONES_BUDGET, parseInt((req.query.stones as string) || '13', 10) || 13)
+            );
+            const targetGoal = Math.max(
+                0,
+                Math.min(MAX_STONES_BUDGET, parseInt((req.query.target as string) || '12', 10) || 12)
+            );
             const sampleMessage = (req.query.sample as string) || 'call me at zero one seven 8 9 1 2 3 4 5 6 later';
 
             const { data: perks } = await supabase
@@ -202,6 +211,34 @@ export function registerAdminAnalyticsRoutes(
                           { id: 'avatar_night_owl', name: 'Midnight Adda Night-Owl Aura', category: 'Avatar Shop', stone_cost: 9, engagement_boost: 96, icon_emoji: '🦉' }
                       ];
 
+            // Batch matcher demo: the classic greedy trap (path A-B-C-D, heavy middle edge B-C).
+            const demoNames = ['Arif (CSE)', 'Bushra (EEE)', 'Chandni (BBA)', 'Dipto (CSE)'];
+            const demoEdges: MatchEdge[] = [
+                { u: 0, v: 1, w: 60 },
+                { u: 1, v: 2, w: 100 },
+                { u: 2, v: 3, w: 60 }
+            ];
+            const demoSolved = solveBatchMatching(demoNames.length, demoEdges);
+            const demoGreedy = greedyMatching(demoNames.length, demoEdges);
+            const toNames = (pairs: MatchEdge[]) => pairs.map(p => ({ a: demoNames[p.u], b: demoNames[p.v], w: p.w }));
+
+            // Live batch ticks recorded by the matchmaker (most recent first)
+            const rawTicks: string[] = await redis.lrange(BATCH_STATS_KEY, 0, 49).catch(() => [] as string[]);
+            const ticks = rawTicks
+                .map(t => {
+                    try {
+                        return JSON.parse(t);
+                    } catch {
+                        return null;
+                    }
+                })
+                .filter(Boolean);
+            const sum = (k: string) => ticks.reduce((acc: number, t: any) => acc + (Number(t[k]) || 0), 0);
+
+            const strippedSample = sampleMessage.toLowerCase().replace(/[^a-z0-9]/g, '');
+            const lcsTarget = 'instagramcom';
+            const lcsTop = lcsMemo(strippedSample.slice(0, 200), lcsTarget);
+
             res.json({
                 inputs: { walletStones, targetGoal, sampleMessage },
                 knapsack: StonesKnapsackCoinEngine.solve01KnapsackPerks(activePerks, walletStones),
@@ -218,17 +255,44 @@ export function registerAdminAnalyticsRoutes(
                     4,
                     5
                 ),
-                batchMatchingBacktrack: BenchlyBacktrackingEngine.solveMaxMatchBatchBacktrack(4, [
-                    [0, 100, 80, 0],
-                    [100, 0, 0, 80],
-                    [80, 0, 0, 0],
-                    [0, 80, 0, 0]
-                ]),
+                batchMatching: {
+                    windowMs: BATCH_WINDOW_MS,
+                    demo: {
+                        students: demoNames,
+                        edges: demoEdges.map(e => ({ a: demoNames[e.u], b: demoNames[e.v], w: e.w })),
+                        solverPairs: toNames(demoSolved.pairs),
+                        greedyPairs: toNames(demoGreedy),
+                        components: demoSolved.components
+                    },
+                    live: {
+                        ticks: ticks.slice(0, 15),
+                        tickCount: ticks.length,
+                        studentsSeen: sum('poolSize'),
+                        solverMatched: sum('solverMatchedStudents'),
+                        greedyMatched: sum('greedyMatchedStudents'),
+                        solverWeight: sum('solverWeight'),
+                        greedyWeight: sum('greedyWeight')
+                    }
+                },
                 piiShield: {
                     verdict: BenchlyPiiShield.sanitizeLiveMessage(sampleMessage),
                     kmpLpsSample: {
                         pattern: 'instagramcom',
                         lpsTable: BenchlyPiiShield.buildKmpLps('instagramcom')
+                    },
+                    rabinKarp: {
+                        window: BenchlyPiiShield.RK_WINDOW,
+                        normalized: strippedSample.slice(0, 200),
+                        windowHashes: BenchlyPiiShield.rollingWindowHashes(
+                            strippedSample.slice(0, 200),
+                            BenchlyPiiShield.RK_WINDOW
+                        ).slice(0, 8)
+                    },
+                    lcs: {
+                        target: lcsTarget,
+                        length: lcsTop.length,
+                        memoSubproblems: lcsTop.subproblemsSolved,
+                        tableCells: Math.min(200, strippedSample.length) * lcsTarget.length
                     }
                 }
             });

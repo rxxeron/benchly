@@ -2,7 +2,8 @@
  * CSE246 Lab 6 & Lab 10: Anti-Evasion PII & Harassment Shield for Benchly
  * Combines:
  * 1. Knuth-Morris-Pratt (KMP O(N+M) with pi-Prefix/LPS Table)
- * 2. Rabin-Karp Polynomial Rolling Hash for Cross-Room Flood/Spam Detection
+ * 2. Rabin-Karp rolling hash (sliding K-char window + verification on hash hit) for
+ *    per-sender copy-paste flood detection across rooms
  * 3. Longest Common Subsequence (LCS) Dynamic Programming for Obfuscated Social Handles
  */
 
@@ -29,7 +30,14 @@ const WORD_DIGIT_MAP: Record<string, string> = {
 };
 
 export class BenchlyPiiShield {
-    private static recentRollingHashes = new Map<number, { count: number; lastSeen: number }>();
+    /** Window length for Rabin-Karp flood detection (characters of normalized a-z0-9 text). */
+    static readonly RK_WINDOW = 12;
+    private static readonly RK_BASE = 257;
+    private static readonly RK_MOD = 1000000007;
+    private static readonly FLOOD_WINDOW_MS = 45000;
+    /** A message is flood when it repeats a K-window from this many of the sender's recent messages. */
+    private static readonly FLOOD_REPEATS = 3;
+    private static recentBySender = new Map<string, Array<{ text: string; at: number }>>();
 
     /**
      * Builds the KMP Longest Proper Prefix which is also Suffix (LPS / pi) array in O(M)
@@ -111,23 +119,90 @@ export class BenchlyPiiShield {
         return prev[m] / m;
     }
 
-    /**
-     * Rabin-Karp Polynomial Rolling Hash over message shingles
-     */
-    static computeRabinKarpFingerprint(normalized: string): number {
-        const BASE = 257;
-        const MOD = 1000000007;
-        let h = 0;
-        for (let i = 0; i < normalized.length; i++) {
-            h = (h * BASE + normalized.charCodeAt(i)) % MOD;
-        }
+    /** (base^(k-1)) mod p, used to drop the leading character from a rolling hash. */
+    private static rkHighPow(k: number): number {
+        let h = 1;
+        for (let i = 0; i < k - 1; i++) h = (h * this.RK_BASE) % this.RK_MOD;
         return h;
+    }
+
+    /** Hash of every length-k window of s, computed in O(n) with a rolling update. */
+    static rollingWindowHashes(s: string, k: number): number[] {
+        const n = s.length;
+        if (k <= 0 || n < k) return [];
+        const B = this.RK_BASE;
+        const P = this.RK_MOD;
+        const high = this.rkHighPow(k);
+        const out: number[] = [];
+        let h = 0;
+        for (let i = 0; i < k; i++) h = (h * B + s.charCodeAt(i)) % P;
+        out.push(h);
+        for (let i = k; i < n; i++) {
+            // remove s[i-k], shift, add s[i]; adding P keeps the value non-negative before the mod
+            h = (h - ((s.charCodeAt(i - k) * high) % P) + P) % P;
+            h = (h * B + s.charCodeAt(i)) % P;
+            out.push(h);
+        }
+        return out;
+    }
+
+    /**
+     * Classic Rabin-Karp search: compare the pattern hash with each rolling text-window hash and
+     * verify character-by-character on a hit (so hash collisions never produce false matches).
+     * Average O(N + M); worst case O(N·M) when every window collides.
+     */
+    static rabinKarpSearch(text: string, pattern: string): { matches: number[]; spuriousHits: number } {
+        const m = pattern.length;
+        if (!m || m > text.length) return { matches: [], spuriousHits: 0 };
+        const target = this.rollingWindowHashes(pattern, m)[0];
+        const windows = this.rollingWindowHashes(text, m);
+        const matches: number[] = [];
+        let spuriousHits = 0;
+        windows.forEach((h, i) => {
+            if (h !== target) return;
+            if (text.startsWith(pattern, i)) matches.push(i);
+            else spuriousHits++;
+        });
+        return { matches, spuriousHits };
+    }
+
+    /**
+     * Counts how many of `previous` share at least one verified length-k substring with `current`.
+     * Builds a hash index of current's windows, then rolls over each previous message.
+     */
+    static countMessagesSharingWindow(current: string, previous: string[], k: number): number {
+        const curHashes = this.rollingWindowHashes(current, k);
+        if (curHashes.length === 0) return 0;
+        const index = new Map<number, number[]>();
+        curHashes.forEach((h, i) => {
+            const list = index.get(h);
+            if (list) list.push(i);
+            else index.set(h, [i]);
+        });
+        let sharing = 0;
+        for (const prev of previous) {
+            const prevHashes = this.rollingWindowHashes(prev, k);
+            let found = false;
+            for (let j = 0; j < prevHashes.length && !found; j++) {
+                const positions = index.get(prevHashes[j]);
+                if (!positions) continue;
+                for (const i of positions) {
+                    // Verification step: rule out a hash collision
+                    if (current.substr(i, k) === prev.substr(j, k)) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if (found) sharing++;
+        }
+        return sharing;
     }
 
     /**
      * Full real-time message sanitization pipeline called on every send_message event
      */
-    static sanitizeLiveMessage(rawContent: string): PiiInspectionVerdict {
+    static sanitizeLiveMessage(rawContent: string, senderId?: string): PiiInspectionVerdict {
         let safeContent = rawContent;
         const blockedTypes: string[] = [];
         const kmpMatches: string[] = [];
@@ -200,34 +275,34 @@ export class BenchlyPiiShield {
             }
         }
 
-        // 4. Rabin-Karp Rolling Hash Cross-Room Spam / Flood Check
+        // 4. Rabin-Karp flood check (per sender, across rooms): block when this message repeats a
+        //    12-char window that also appears in FLOOD_REPEATS of the sender's last messages.
+        //    Without a senderId (e.g. the admin demo) the check is skipped and no state is stored.
         let rabinKarpSpamDetected = false;
-        if (strippedAlpha.length >= 12) {
-            const fp = this.computeRabinKarpFingerprint(strippedAlpha);
+        if (senderId && strippedAlpha.length >= this.RK_WINDOW) {
             const now = Date.now();
-            // Bound memory usage by pruning expired hashes when map grows
-            if (this.recentRollingHashes.size > 5000) {
-                for (const [key, val] of this.recentRollingHashes.entries()) {
-                    if (now - val.lastSeen >= 45000) {
-                        this.recentRollingHashes.delete(key);
+            if (this.recentBySender.size > 5000) {
+                for (const [key, list] of this.recentBySender.entries()) {
+                    if (!list.length || now - list[list.length - 1].at >= this.FLOOD_WINDOW_MS) {
+                        this.recentBySender.delete(key);
                     }
                 }
-                if (this.recentRollingHashes.size > 5000) {
-                    this.recentRollingHashes.clear();
-                }
             }
-            const existing = this.recentRollingHashes.get(fp);
-            if (existing && now - existing.lastSeen < 45000) {
-                existing.count += 1;
-                existing.lastSeen = now;
-                if (existing.count >= 4) {
-                    rabinKarpSpamDetected = true;
-                    blockedTypes.push('rabin_karp_spam');
-                    safeContent = '🛡️ [SPAM FLOOD BLOCKED BY RABIN-KARP FILTER]';
-                }
-            } else {
-                this.recentRollingHashes.set(fp, { count: 1, lastSeen: now });
+            const recent = (this.recentBySender.get(senderId) || []).filter(
+                m => now - m.at < this.FLOOD_WINDOW_MS
+            );
+            const sharing = this.countMessagesSharingWindow(
+                strippedAlpha,
+                recent.map(m => m.text),
+                this.RK_WINDOW
+            );
+            if (sharing >= this.FLOOD_REPEATS) {
+                rabinKarpSpamDetected = true;
+                blockedTypes.push('rabin_karp_spam');
+                safeContent = '🛡️ [SPAM FLOOD BLOCKED BY RABIN-KARP FILTER]';
             }
+            recent.push({ text: strippedAlpha, at: now });
+            this.recentBySender.set(senderId, recent.slice(-6));
         }
 
         return {

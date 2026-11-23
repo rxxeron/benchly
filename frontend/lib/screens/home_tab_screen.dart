@@ -368,7 +368,7 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
             roomId: data['roomId'],
             myAlias: currentAlias ?? 'Anonymous',
             partnerAlias: data['partnerAlias'] ?? 'Anonymous Student',
-            partnerBadge: data['partnerBadge'] ?? 'EWU Student',
+            partnerBadge: _badgeWithFit(data['partnerBadge'] ?? 'EWU Student', data['compatibilityScore']),
             initialIcebreaker: data['icebreaker'],
           ),
         ));
@@ -447,6 +447,15 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
         );
       }
     });
+  }
+
+  /// Turns the matchmaker's compatibility score into a friendly label for the chat header.
+  /// Scores start at 50; shared mode (+25), department fit (up to +30) and wait time (up to +25) add on.
+  String _badgeWithFit(dynamic badge, dynamic score) {
+    final s = score is num ? score.toInt() : int.tryParse('$score');
+    if (s == null) return '$badge';
+    final fit = s >= 110 ? 'Great fit' : s >= 85 ? 'Good fit' : 'New face';
+    return '$badge · $fit';
   }
 
   void _startSearching() {
@@ -1849,7 +1858,7 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
           const SizedBox(height: 6),
           Text(
             _searchCountdown > 15
-                ? 'Finding the best campus classmate to sit with...'
+                ? 'Everyone searching right now is matched together every ~1.5s, so more people get a seat.'
                 : 'Checking across all EWU departments...',
             style: TextStyle(
               color: Color(0xFF1E1B18).withValues(alpha: 0.60),
@@ -1860,7 +1869,11 @@ class _HomeTabScreenState extends State<HomeTabScreen> with SingleTickerProvider
           const SizedBox(height: 14),
           TextButton(
             onPressed: _cancelSearching,
-            child: const Text('Cancel Search', style: TextStyle(color: Color(0xFFEF4444), fontSize: 13)),
+            style: TextButton.styleFrom(minimumSize: const Size(48, 44)),
+            child: const Text(
+              'Cancel Search',
+              style: TextStyle(color: Color(0xFFB91C1C), fontSize: 14, fontWeight: FontWeight.w700),
+            ),
           ),
         ],
       ),

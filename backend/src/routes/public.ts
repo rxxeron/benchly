@@ -5,6 +5,7 @@ import type { AnalyticsEngine } from '../analytics';
 import { isAllowedEwuEmail } from '../supabase';
 import { EWU_CAMPUS_ICEBREAKERS } from '../ewu_helper';
 import { StonesKnapsackCoinEngine } from '../algorithms/stones_knapsack_coin_dp';
+import { weeklyGrowthStreak } from '../algorithms/sequence_dp';
 import { generateServerNickname, generateServerNicknameBatch } from '../nickname_engine';
 
 export interface PublicRoutesDeps {
@@ -81,9 +82,34 @@ export function registerPublicRoutes(app: express.Express, deps: PublicRoutesDep
                 p_timeframe: timeframe
             });
             if (error) throw error;
+
             return res.json(data);
         } catch (err: any) {
             console.error('Student analytics error:', err);
+            return res.status(500).json({ error: 'Internal server error' });
+        }
+    });
+
+    /**
+     * Growth streak (CSE246 L11 / Lab 6): LIS over the student's weekly chat counts for the last
+     * 12 weeks, via patience sorting (O(n log n)). Longest run of active weeks, not necessarily
+     * consecutive, in which the number of chats strictly increased.
+     */
+    app.get('/api/student/growth', async (req, res) => {
+        try {
+            const authUser = await getBearerUser(req);
+            if (!authUser) return res.status(401).json({ error: 'Unauthorized' });
+            const since = new Date(Date.now() - 12 * 7 * 24 * 60 * 60 * 1000).toISOString();
+            const { data: rows, error } = await supabase
+                .from('chat_sessions')
+                .select('created_at')
+                .eq('user_id', authUser.id)
+                .gte('created_at', since)
+                .limit(5000);
+            if (error) throw error;
+            return res.json(weeklyGrowthStreak((rows || []).map((r: any) => new Date(r.created_at).getTime())));
+        } catch (err: any) {
+            console.error('Student growth error:', err);
             return res.status(500).json({ error: 'Internal server error' });
         }
     });

@@ -152,7 +152,7 @@ export function registerChatHandlers(
         const isHandshakeAgreed = await redis.get(`room:${roomId}:handshake_agreed`);
 
         if (!isHandshakeAgreed) {
-            const shieldVerdict = BenchlyPiiShield.sanitizeLiveMessage(safeContent);
+            const shieldVerdict = BenchlyPiiShield.sanitizeLiveMessage(safeContent, user.id);
             safeContent = shieldVerdict.safeContent;
             if (shieldVerdict.wasModified) {
                 for (const bType of shieldVerdict.blockedTypes) {

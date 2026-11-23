@@ -430,52 +430,22 @@ class _StonesRewardsScreenState extends State<StonesRewardsScreen> {
                   ),
                   const SizedBox(height: 16),
 
-                  // 2. Smart Recommended Bundle (Powered silently by 0/1 Knapsack DP)
+                  // 2. Smart pick: 0/1 knapsack DP over the perks the student has not unlocked yet
                   if (bestBundle != null && bestBundle.dpSelectedItems.isNotEmpty) ...[
                     StaggeredReveal(
                       index: 1,
-                      child: Container(
-                        padding: const EdgeInsets.all(15),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [
-                              const Color(0xFF0FB881).withValues(alpha: 0.14),
-                              const Color(0xFF6366F1).withValues(alpha: 0.10),
-                            ],
-                          ),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: const Color(0xFF0FB881).withValues(alpha: 0.3)),
-                        ),
-                        child: Row(
-                          children: [
-                            const Text('✨', style: TextStyle(fontSize: 22)),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Text(
-                                    'Smart Pick for Your Balance',
-                                    style: TextStyle(
-                                      color: Color(0xFF34D399),
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    'Best value with $_liveStonesBalance 💎: ${bestBundle.dpSelectedItems.map((e) => e.name).join(" + ")} (+${bestBundle.dpOptimalValue} Aura)',
-                                    style: TextStyle(
-                                      color: Color(0xFF1E1B18).withValues(alpha: 0.85),
-                                      fontSize: 12,
-                                      height: 1.35,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
+                      child: _SmartPickCard(
+                        wallet: _liveStonesBalance,
+                        result: bestBundle,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                  ] else if (lockedPerks.isNotEmpty) ...[
+                    StaggeredReveal(
+                      index: 1,
+                      child: _NextUnlockHint(
+                        wallet: _liveStonesBalance,
+                        cheapest: lockedPerks.reduce((a, b) => a.stoneCost <= b.stoneCost ? a : b),
                       ),
                     ),
                     const SizedBox(height: 18),
@@ -701,6 +671,152 @@ class _StonesRewardsScreenState extends State<StonesRewardsScreen> {
             label,
             style: TextStyle(color: Color(0xFF1E1B18).withValues(alpha: 0.80), fontSize: 10.5),
             textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+/// Shows the knapsack-optimal bundle as tappable-looking chips, how much of the wallet it uses,
+/// and (when it differs) what the "best value per Stone" greedy pick would have given.
+class _SmartPickCard extends StatelessWidget {
+  final int wallet;
+  final KnapsackComparisonResult result;
+
+  const _SmartPickCard({required this.wallet, required this.result});
+
+  static const _ink = Color(0xFF1E1B18);
+  static const _green = Color(0xFF047857);
+
+  @override
+  Widget build(BuildContext context) {
+    final used = result.dpUsedWeight;
+    final usedFraction = wallet > 0 ? (used / wallet).clamp(0.0, 1.0) : 0.0;
+    final greedyLoses = result.greedy01Value < result.dpOptimalValue;
+
+    return Semantics(
+      container: true,
+      label: 'Smart pick: ${result.dpSelectedItems.map((e) => e.name).join(", ")}, '
+          'uses $used of $wallet Stones for plus ${result.dpOptimalValue} Aura',
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFFECFDF5),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: _ink, width: 1.6),
+          boxShadow: const [BoxShadow(color: _ink, offset: Offset(3, 3))],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text('✨', style: TextStyle(fontSize: 18)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Best bundle for your $wallet 💎',
+                    style: const TextStyle(color: _green, fontSize: 14, fontWeight: FontWeight.w800),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: _ink.withValues(alpha: 0.2)),
+                  ),
+                  child: Text(
+                    '+${result.dpOptimalValue} Aura',
+                    style: const TextStyle(color: _ink, fontSize: 12, fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: result.dpSelectedItems
+                  .map((p) => Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: _ink.withValues(alpha: 0.18)),
+                        ),
+                        child: Text(
+                          '${p.iconEmoji} ${p.name} · ${p.stoneCost}💎',
+                          style: const TextStyle(color: _ink, fontSize: 12, fontWeight: FontWeight.w600),
+                        ),
+                      ))
+                  .toList(),
+            ),
+            const SizedBox(height: 12),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                value: usedFraction,
+                minHeight: 7,
+                backgroundColor: Colors.white,
+                valueColor: const AlwaysStoppedAnimation(Color(0xFF0FB881)),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Uses $used of $wallet 💎${wallet - used > 0 ? " · ${wallet - used} left over" : " · nothing wasted"}',
+              style: TextStyle(color: _ink.withValues(alpha: 0.75), fontSize: 12),
+            ),
+            if (greedyLoses) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Picking by best value per Stone would only give +${result.greedy01Value} Aura.',
+                style: TextStyle(color: _ink.withValues(alpha: 0.6), fontSize: 11.5),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Shown when nothing locked is affordable yet: tells the student exactly how far they are.
+class _NextUnlockHint extends StatelessWidget {
+  final int wallet;
+  final StonePerkItem cheapest;
+
+  const _NextUnlockHint({required this.wallet, required this.cheapest});
+
+  @override
+  Widget build(BuildContext context) {
+    final missing = (cheapest.stoneCost - wallet).clamp(0, cheapest.stoneCost);
+    final progress = cheapest.stoneCost > 0 ? (wallet / cheapest.stoneCost).clamp(0.0, 1.0) : 1.0;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF4E4),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF1E1B18).withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${cheapest.iconEmoji} $missing more 💎 to unlock ${cheapest.name}',
+            style: const TextStyle(color: Color(0xFF1E1B18), fontSize: 13, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 6,
+              backgroundColor: Colors.white,
+              valueColor: const AlwaysStoppedAnimation(Color(0xFFF59E0B)),
+            ),
           ),
         ],
       ),

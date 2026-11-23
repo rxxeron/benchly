@@ -14,10 +14,22 @@ export interface PerkCandidate {
     icon_emoji: string;
 }
 
+/**
+ * Largest Stones budget/target the engines accept. Must stay >= the clamp the API routes
+ * apply (routes/public.ts allows up to 200), otherwise larger wallets are silently truncated.
+ */
+export const MAX_STONES_BUDGET = 200;
+
+/** Boost per Stone; free perks rank first, and 0/0 never produces NaN in the sort. */
+function valueDensity(p: PerkCandidate): number {
+    if (p.stone_cost <= 0) return p.engagement_boost > 0 ? Infinity : 0;
+    return p.engagement_boost / p.stone_cost;
+}
+
 export class StonesKnapsackCoinEngine {
     static solve01KnapsackPerks(perks: PerkCandidate[], walletStones: number) {
         const n = perks.length;
-        const W = Math.max(0, Math.min(walletStones, 100));
+        const W = Math.max(0, Math.min(Math.floor(walletStones), MAX_STONES_BUDGET));
         const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(W + 1).fill(0));
 
         for (let i = 1; i <= n; i++) {
@@ -41,9 +53,11 @@ export class StonesKnapsackCoinEngine {
         }
 
         // Greedy by density comparison
-        const sortedByDensity = [...perks].sort(
-            (a, b) => b.engagement_boost / b.stone_cost - a.engagement_boost / a.stone_cost
-        );
+        const sortedByDensity = [...perks].sort((a, b) => {
+            const da = valueDensity(a);
+            const db = valueDensity(b);
+            return da === db ? 0 : db > da ? 1 : -1;
+        });
         let greedyWeight = 0;
         let greedyValue = 0;
         const greedySelected: PerkCandidate[] = [];
@@ -56,8 +70,19 @@ export class StonesKnapsackCoinEngine {
             }
         }
 
+        const memo = this.solve01KnapsackMemo(perks, W);
+        const fractional = this.solveFractionalKnapsack(perks, W);
+
         return {
             walletStones: W,
+            // Bottom-up tabulation fills every (item, capacity) cell...
+            tableCellsComputed: n * (W + 1),
+            // ...top-down memoization only visits the states reachable from (n, W).
+            memoOptimalBoost: memo.bestBoost,
+            memoSubproblemsSolved: memo.subproblemsSolved,
+            // Fractional (greedy) knapsack is the LP relaxation: an upper bound on any 0/1 answer.
+            fractionalUpperBound: fractional.upperBound,
+            fractionalTakes: fractional.takes,
             dpOptimalBoost: dp[n][W],
             dpStonesUsed: W - remW,
             dpSelectedPerks: selectedPerks.reverse(),
@@ -67,11 +92,64 @@ export class StonesKnapsackCoinEngine {
         };
     }
 
+    /**
+     * Top-down 0/1 knapsack: best(i, w) = best boost using perks[0..i-1] with capacity w.
+     * Same recurrence as the table, but only reachable states are solved and cached.
+     */
+    static solve01KnapsackMemo(perks: PerkCandidate[], walletStones: number) {
+        const W = Math.max(0, Math.min(Math.floor(walletStones), MAX_STONES_BUDGET));
+        const memo = new Map<number, number>();
+        let subproblemsSolved = 0;
+        const best = (i: number, w: number): number => {
+            // Only i === 0 is a base case: free (0-Stone) perks can still be taken when w === 0.
+            if (i === 0) return 0;
+            const key = i * (W + 1) + w;
+            const cached = memo.get(key);
+            if (cached !== undefined) return cached;
+            const p = perks[i - 1];
+            let value = best(i - 1, w);
+            if (p.stone_cost <= w) value = Math.max(value, p.engagement_boost + best(i - 1, w - p.stone_cost));
+            memo.set(key, value);
+            subproblemsSolved++;
+            return value;
+        };
+        return { bestBoost: best(perks.length, W), subproblemsSolved };
+    }
+
+    /**
+     * Fractional knapsack (greedy by boost per Stone, O(n log n)). Perks cannot really be split,
+     * so this is not a purchase plan: it is the relaxation that bounds the 0/1 optimum from above
+     * (greedy 0/1 <= DP optimum <= fractional), the same bound branch-and-bound knapsack uses.
+     */
+    static solveFractionalKnapsack(perks: PerkCandidate[], walletStones: number) {
+        let remaining = Math.max(0, Math.min(Math.floor(walletStones), MAX_STONES_BUDGET));
+        let upperBound = 0;
+        const takes: Array<{ id: string; fraction: number }> = [];
+        const sorted = [...perks].sort((a, b) => {
+            const da = valueDensity(a);
+            const db = valueDensity(b);
+            return da === db ? 0 : db > da ? 1 : -1;
+        });
+        for (const p of sorted) {
+            if (p.stone_cost <= 0) {
+                upperBound += Math.max(0, p.engagement_boost);
+                takes.push({ id: p.id, fraction: 1 });
+                continue;
+            }
+            if (remaining <= 0) break;
+            const fraction = Math.min(1, remaining / p.stone_cost);
+            upperBound += p.engagement_boost * fraction;
+            remaining -= p.stone_cost * fraction;
+            takes.push({ id: p.id, fraction: Number(fraction.toFixed(4)) });
+        }
+        return { upperBound: Number(upperBound.toFixed(2)), takes };
+    }
+
     static solveCoinChangeMilestones(
         targetStones: number,
         denominations: number[] = [1, 2, 3, 5, 7, 10]
     ) {
-        const S = Math.max(1, Math.min(targetStones, 100));
+        const S = Math.max(0, Math.min(Math.floor(targetStones), MAX_STONES_BUDGET));
         const coins = [...denominations].sort((a, b) => a - b);
         const INF = 999999;
         const dpMin = new Array<number>(S + 1).fill(INF);
@@ -143,7 +221,7 @@ export class StonesKnapsackCoinEngine {
      * (zero wasted Stones), pruning dead branches whenever remainingSum < remainingBudget.
      */
     static solveExactBudgetBacktracking(perks: PerkCandidate[], exactBudget: number) {
-        const target = Math.max(0, Math.min(exactBudget, 100));
+        const target = Math.max(0, Math.min(Math.floor(exactBudget), MAX_STONES_BUDGET));
         const sorted = [...perks].sort((a, b) => b.stone_cost - a.stone_cost);
         const n = sorted.length;
 

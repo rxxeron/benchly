@@ -29,6 +29,12 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
     'usage_minutes': 0.0,
   };
 
+  /// Weekly chat counts for the last 12 weeks + LIS "growth streak" from /api/student/growth.
+  List<int> _weeklyChats = const [];
+  Set<int> _streakWeeks = const {};
+  int _streakLength = 0;
+  bool _growthLoaded = false;
+
   String? _userAlias;
   int _userStreak = 0;
   String? _userDept;
@@ -41,6 +47,29 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
     super.initState();
     _loadUserProfile();
     _fetchAnalytics();
+    _fetchGrowth();
+  }
+
+  /// Independent of the timeframe selector: always the last 12 weeks.
+  Future<void> _fetchGrowth() async {
+    try {
+      final token = Supabase.instance.client.auth.currentSession?.accessToken;
+      if (token == null) return;
+      final baseUrl = AppConfig.socketUrl.replaceAll(RegExp(r'/+$'), '');
+      final response = await http
+          .get(Uri.parse('$baseUrl/api/student/growth'), headers: {'Authorization': 'Bearer $token'})
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode != 200 || !mounted) return;
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      setState(() {
+        _weeklyChats = ((body['weeklyChats'] as List?) ?? []).map((e) => (e as num).toInt()).toList();
+        _streakWeeks = ((body['streakWeeks'] as List?) ?? []).map((e) => (e as num).toInt()).toSet();
+        _streakLength = (body['streakLength'] as num?)?.toInt() ?? 0;
+        _growthLoaded = true;
+      });
+    } catch (_) {
+      // Growth card simply stays hidden when the backend is unreachable.
+    }
   }
 
   String get _currentPeriod {
@@ -227,7 +256,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
         ],
       ),
       body: RefreshIndicator(
-          onRefresh: () => _fetchAnalytics(silent: true),
+          onRefresh: () => Future.wait([_fetchAnalytics(silent: true), _fetchGrowth()]),
           color: const Color(0xFF0FB881),
           backgroundColor: const Color(0xFFFFFFFF),
           child: ListView(
@@ -252,12 +281,12 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.info_outline, color: Color(0xFFF59E0B), size: 16),
+                      const Icon(Icons.info_outline, color: Color(0xFF92400E), size: 16),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           _error!,
-                          style: const TextStyle(color: Color(0xFFF59E0B), fontSize: 11),
+                          style: const TextStyle(color: Color(0xFF92400E), fontSize: 12, fontWeight: FontWeight.w600),
                         ),
                       ),
                     ],
@@ -268,16 +297,22 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
               StaggeredReveal(index: 2, child: _buildMetricGrid()),
               const SizedBox(height: 18),
 
+              // Growth streak (LIS over weekly chats)
+              if (_growthLoaded) ...[
+                StaggeredReveal(index: 3, child: _buildGrowthStreakCard()),
+                const SizedBox(height: 18),
+              ],
+
               // Friends Brought / Referral Impact Card
-              StaggeredReveal(index: 3, child: _buildReferralImpactCard()),
+              StaggeredReveal(index: 4, child: _buildReferralImpactCard()),
               const SizedBox(height: 18),
 
               // Sent vs Received Balance Breakdown
-              StaggeredReveal(index: 4, child: _buildMessageBalanceCard()),
+              StaggeredReveal(index: 5, child: _buildMessageBalanceCard()),
               const SizedBox(height: 18),
 
               // Adda Highlights & Privacy Notice
-              StaggeredReveal(index: 5, child: _buildHighlightsCard()),
+              StaggeredReveal(index: 6, child: _buildHighlightsCard()),
               const SizedBox(height: 30),
             ],
           ),
@@ -446,6 +481,107 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGrowthStreakCard() {
+    const ink = Color(0xFF1E1B18);
+    final maxCount = _weeklyChats.isEmpty ? 0 : _weeklyChats.reduce((a, b) => a > b ? a : b);
+    final hasData = maxCount > 0;
+    final headline = !hasData
+        ? 'No chats in the last 12 weeks yet'
+        : _streakLength <= 1
+            ? 'Chat in more weeks to start a growth streak'
+            : '$_streakLength-week growth streak';
+
+    return Semantics(
+      container: true,
+      label: '$headline. Weekly chats, oldest first: ${_weeklyChats.join(", ")}',
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: ink, width: 1.6),
+          boxShadow: const [BoxShadow(color: ink, offset: Offset(3, 3))],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.trending_up_rounded, color: Color(0xFF047857), size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    headline,
+                    style: const TextStyle(color: ink, fontSize: 15, fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Highlighted weeks each beat the one before (last 12 weeks).',
+              style: TextStyle(color: ink.withValues(alpha: 0.65), fontSize: 12),
+            ),
+            const SizedBox(height: 14),
+            SizedBox(
+              height: 86,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: List.generate(_weeklyChats.length, (i) {
+                  final c = _weeklyChats[i];
+                  final inStreak = _streakWeeks.contains(i);
+                  final h = hasData ? (c / maxCount) * 64 : 0.0;
+                  return Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 2.5),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          if (c > 0)
+                            Text(
+                              '$c',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: inStreak ? FontWeight.w800 : FontWeight.w500,
+                                color: inStreak ? const Color(0xFF047857) : ink.withValues(alpha: 0.5),
+                              ),
+                            ),
+                          const SizedBox(height: 2),
+                          AnimatedContainer(
+                            duration: MediaQuery.of(context).disableAnimations
+                                ? Duration.zero
+                                : const Duration(milliseconds: 350),
+                            height: c > 0 ? h.clamp(4.0, 64.0) : 3,
+                            decoration: BoxDecoration(
+                              color: inStreak
+                                  ? const Color(0xFF0FB881)
+                                  : c > 0
+                                      ? ink.withValues(alpha: 0.18)
+                                      : ink.withValues(alpha: 0.07),
+                              borderRadius: BorderRadius.circular(5),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('12 weeks ago', style: TextStyle(fontSize: 10.5, color: ink.withValues(alpha: 0.5))),
+                Text('This week', style: TextStyle(fontSize: 10.5, color: ink.withValues(alpha: 0.5))),
+              ],
+            ),
+          ],
         ),
       ),
     );

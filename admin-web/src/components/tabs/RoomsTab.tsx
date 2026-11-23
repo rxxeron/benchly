@@ -105,15 +105,35 @@ export function RoomsTab({ rooms, selectedRoom, onInspectRoom }: RoomsTabProps) 
                 Canonical Huffman Binary Tree — Room <span className="mono">{selectedRoom.roomId}</span>
               </h3>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <span className="badge emerald">Saved {selectedRoom.stats?.savingsPercent}%</span>
+                {selectedRoom.stats?.encoding === 'raw' ? (
+                  <span className="badge amber" title="Bitstream + codebook would have been larger than the original">
+                    Stored raw (Huffman would not save space)
+                  </span>
+                ) : (
+                  <span
+                    className={`badge ${Number(selectedRoom.stats?.savingsPercent) > 0 ? 'emerald' : 'amber'}`}
+                    title={
+                      selectedRoom.stats?.savingsIncludesCodebook
+                        ? 'Net saving, counting the stored codebook'
+                        : 'Older archive: this figure ignores the codebook'
+                    }
+                  >
+                    {selectedRoom.stats?.savingsIncludesCodebook ? 'Net saved' : 'Bitstream saved'} {selectedRoom.stats?.savingsPercent}%
+                  </span>
+                )}
                 <span className="badge sky">
                   {selectedRoom.stats?.originalBytes}B → {selectedRoom.stats?.compressedBytes}B
+                  {selectedRoom.stats?.codebookBytes ? ` + ${selectedRoom.stats.codebookBytes}B codebook` : ''}
                 </span>
                 <span className="badge emerald">
-                  H(X)={selectedRoom.stats?.shannonEntropy} ≤ L̄={selectedRoom.stats?.averageCodeLength}
+                  H(X)={selectedRoom.stats?.shannonEntropy} ≤ L̄={selectedRoom.stats?.averageCodeLength} &lt; H(X)+1
                 </span>
               </div>
             </div>
+            <p style={{ fontSize: 13, color: '#575049', margin: '0 0 10px' }}>
+              Huffman (L9, greedy) merges the two least-frequent symbols until one tree remains. Codes are made canonical so only code
+              lengths need storing. Short chats are often stored raw because the codebook outweighs the saving.
+            </p>
             <HuffmanTreeView tree={selectedRoom.huffmanTree} />
           </div>
 
