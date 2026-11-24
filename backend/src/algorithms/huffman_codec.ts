@@ -102,6 +102,8 @@ class BinaryMinHeap {
 export interface CompressedTranscriptMeta {
     originalLength: number;
     originalBytes: number;
+    /** Exact unpadded bit count before byte alignment. */
+    bitLength?: number;
     /** Packed Huffman bitstream only. */
     compressedBytes: number;
     /** Size of the codebook (JSON of codeLengths) that must be stored to decode. */
@@ -117,6 +119,22 @@ export interface CompressedTranscriptMeta {
     codeLengths: Record<string, number>;
     symbolOrder: CanonicalSymbolOrder;
     packedBase64: string;
+}
+
+export interface HuffmanWirePacket {
+    algorithm: 'canonical-huffman';
+    packedBase64: string;
+    codeLengths: Record<string, number>;
+    originalLength: number;
+    bitLength: number;
+    originalBytes: number;
+    compressedBytes: number;
+    codebookBytes: number;
+    shannonEntropy: number;
+    averageCodeLength: number;
+    shannonVerified: boolean;
+    distinctSymbols: number;
+    symbolOrder: 'codepoint';
 }
 
 export interface EncryptedHuffmanArchive {
@@ -308,18 +326,97 @@ export class CanonicalHuffmanCodec {
         return {
             originalLength: chars.length,
             originalBytes,
+            bitLength: bitString.length,
             compressedBytes,
             codebookBytes,
             savingsPercent,
             payloadSavingsPercent,
             shannonEntropy: Number(entropy.toFixed(4)),
             averageCodeLength: Number(avgLen.toFixed(4)),
-            shannonVerified: avgLen + 1e-9 >= entropy && avgLen < entropy + 1.0,
+            shannonVerified:
+                avgLen + 1e-9 >= entropy &&
+                (symbols.length <= 1 ? avgLen <= entropy + 1.0 + 1e-9 : avgLen < entropy + 1.0),
             distinctSymbols: symbols.length,
             codeLengths,
             symbolOrder: 'codepoint',
             packedBase64: byteBuffer.toString('base64')
         };
+    }
+
+    /**
+     * Encodes a single live chat message into a Canonical Huffman wire packet
+     * (packed bitstream + `codeLengths` tree specification, zero plaintext).
+     */
+    static encodeLiveMessage(rawMessage: string): HuffmanWirePacket {
+        const cleaned = (rawMessage ?? '').replace(/\u0000/g, '');
+        if (cleaned.length === 0) {
+            return {
+                algorithm: 'canonical-huffman',
+                packedBase64: '',
+                codeLengths: {},
+                originalLength: 0,
+                bitLength: 0,
+                originalBytes: 0,
+                compressedBytes: 0,
+                codebookBytes: 2,
+                shannonEntropy: 0,
+                averageCodeLength: 0,
+                shannonVerified: true,
+                distinctSymbols: 0,
+                symbolOrder: 'codepoint'
+            };
+        }
+        const meta = this.compressTranscriptJson(cleaned);
+        return {
+            algorithm: 'canonical-huffman',
+            packedBase64: meta.packedBase64,
+            codeLengths: meta.codeLengths,
+            originalLength: meta.originalLength,
+            bitLength: meta.bitLength ?? meta.compressedBytes * 8,
+            originalBytes: meta.originalBytes,
+            compressedBytes: meta.compressedBytes,
+            codebookBytes: meta.codebookBytes,
+            shannonEntropy: meta.shannonEntropy,
+            averageCodeLength: meta.averageCodeLength,
+            shannonVerified: meta.shannonVerified,
+            distinctSymbols: meta.distinctSymbols,
+            symbolOrder: 'codepoint'
+        };
+    }
+
+    /**
+     * Safely validates and decodes an untrusted Canonical Huffman wire packet from a client socket.
+     * Guards against oversized lengths, invalid bit-depths, and malformed bitstreams.
+     */
+    static decodeLiveMessage(rawPacket: any, maxSymbols = 600): string {
+        if (!rawPacket || typeof rawPacket !== 'object') {
+            throw new Error('Invalid Huffman packet');
+        }
+        const packedBase64 = typeof rawPacket.packedBase64 === 'string' ? rawPacket.packedBase64 : '';
+        const origLen = Number(rawPacket.originalLength);
+        const rawLengths = rawPacket.codeLengths;
+        if (!Number.isInteger(origLen) || origLen < 0 || origLen > maxSymbols) {
+            throw new Error('Invalid Huffman originalLength');
+        }
+        if (origLen === 0) return '';
+        if (!packedBase64 || packedBase64.length > maxSymbols * 8 || !rawLengths || typeof rawLengths !== 'object') {
+            throw new Error('Invalid Huffman payload');
+        }
+        const keys = Object.keys(rawLengths);
+        if (keys.length === 0 || keys.length > maxSymbols) {
+            throw new Error('Invalid Huffman codebook size');
+        }
+        const safeLengths: Record<string, number> = {};
+        for (const k of keys) {
+            const symChars = Array.from(k);
+            const len = Number(rawLengths[k]);
+            if (symChars.length !== 1 || !Number.isInteger(len) || len < 1 || len > 30) {
+                throw new Error('Invalid Huffman symbol or bit length');
+            }
+            safeLengths[k] = len;
+        }
+        const order: CanonicalSymbolOrder = rawPacket.symbolOrder === 'legacy-locale' ? 'legacy-locale' : 'codepoint';
+        return this.decompressTranscriptJson(packedBase64, safeLengths, origLen, order);
     }
 
     /**
@@ -371,6 +468,9 @@ export class CanonicalHuffmanCodec {
                     node = root;
                 }
             }
+        }
+        if (out.length !== originalLength) {
+            throw new Error('Truncated Canonical Huffman bitstream');
         }
         return out.join('');
     }

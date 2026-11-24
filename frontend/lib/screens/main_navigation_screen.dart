@@ -12,6 +12,24 @@ class MainNavigationScreen extends StatefulWidget {
 
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _currentIndex = 0;
+  // Lazy-mount non-home tabs so cold startup doesn't fire 10+ concurrent Supabase/HTTP calls
+  // or build offscreen trees until the student first visits each tab.
+  final List<bool> _mountedTabs = [true, false, false, false];
+
+  Widget _buildTab(int index) {
+    if (!_mountedTabs[index]) return const SizedBox.shrink();
+    switch (index) {
+      case 0:
+        return const HomeTabScreen();
+      case 1:
+        return const StudentAnalyticsScreen();
+      case 2:
+        return const StonesRewardsScreen();
+      case 3:
+      default:
+        return const SettingsScreen();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -23,12 +41,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           backgroundColor: const Color(0xFFFFF9F0),
           body: IndexedStack(
             index: _currentIndex,
-            children: const [
-              HomeTabScreen(),
-              StudentAnalyticsScreen(),
-              StonesRewardsScreen(),
-              SettingsScreen(),
-            ],
+            children: List<Widget>.generate(4, _buildTab, growable: false),
           ),
           bottomNavigationBar: Container(
             decoration: const BoxDecoration(
@@ -42,7 +55,13 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             ),
             child: BottomNavigationBar(
               currentIndex: _currentIndex,
-              onTap: (i) => setState(() => _currentIndex = i),
+              onTap: (i) {
+                if (_currentIndex == i) return;
+                setState(() {
+                  _mountedTabs[i] = true;
+                  _currentIndex = i;
+                });
+              },
               backgroundColor: const Color(0xFFFFFFFF),
               elevation: 0,
               type: BottomNavigationBarType.fixed,

@@ -87,7 +87,7 @@ app.use((_req, res, next) => {
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
     res.setHeader(
         'Content-Security-Policy',
-        "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com https://accounts.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.benchly.live wss://api.benchly.live https://accounts.google.com ws://localhost:* http://localhost:*; frame-ancestors 'none'; base-uri 'self';"
+        "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com https://accounts.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.benchly.live wss://api.benchly.live https://accounts.google.com https://www.gstatic.com https://fonts.gstatic.com ws://localhost:* http://localhost:*; frame-ancestors 'none'; base-uri 'self';"
     );
     if (IS_PROD) {
         res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');

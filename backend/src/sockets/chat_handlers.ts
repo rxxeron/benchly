@@ -5,6 +5,7 @@ import type Redis from 'ioredis';
 import type { AnalyticsEngine } from '../analytics';
 import { applyCooldown } from '../matchmaker';
 import { BenchlyPiiShield } from '../algorithms/pii_shield_engine';
+import { CanonicalHuffmanCodec } from '../algorithms/huffman_codec';
 import { AiCampusCompanionEngine } from '../ai_campus_companion';
 import { CHAT_DURATION_MS, CHAT_WARNING_MS, MAX_MESSAGE_LENGTH, SocketState } from './state';
 
@@ -143,18 +144,32 @@ export function registerChatHandlers(
         rateLimitMap.set(socket.id, rateCount + 1);
 
         const roomId = typeof data?.roomId === 'string' ? data.roomId : '';
-        const rawContent = typeof data?.content === 'string' ? data.content.trim() : '';
-        if (!roomId || !rawContent || rawContent.length > MAX_MESSAGE_LENGTH) return;
+        let decodedInput = '';
+        if (data?.huffman && typeof data.huffman === 'object') {
+            try {
+                decodedInput = CanonicalHuffmanCodec.decodeLiveMessage(data.huffman, MAX_MESSAGE_LENGTH + 64);
+            } catch {
+                socket.emit('error_message', { message: 'Invalid Huffman message packet.' });
+                return;
+            }
+        } else if (typeof data?.content === 'string') {
+            decodedInput = data.content;
+        }
+
+        const rawContent = decodedInput.trim();
+        if (!roomId || !rawContent || Array.from(rawContent).length > MAX_MESSAGE_LENGTH) return;
         if (!(await isRoomMember(roomId, user.id))) return;
 
         const messageId = randomUUID();
         let safeContent = rawContent;
+        let wasPiiShielded = false;
         const isHandshakeAgreed = await redis.get(`room:${roomId}:handshake_agreed`);
 
         if (!isHandshakeAgreed) {
             const shieldVerdict = BenchlyPiiShield.sanitizeLiveMessage(safeContent, user.id);
             safeContent = shieldVerdict.safeContent;
             if (shieldVerdict.wasModified) {
+                wasPiiShielded = true;
                 for (const bType of shieldVerdict.blockedTypes) {
                     analytics.recordPiiBlocked(bType, user.dept_code);
                 }
@@ -165,12 +180,14 @@ export function registerChatHandlers(
                 });
             }
             if (/https?:\/\/[^\s]+/gi.test(safeContent) || /www\.[^\s]+/gi.test(safeContent)) {
+                wasPiiShielded = true;
                 safeContent = safeContent
                     .replace(/https?:\/\/[^\s]+/gi, '[CENSORED LINK]')
                     .replace(/www\.[^\s]+/gi, '[CENSORED LINK]');
                 analytics.recordPiiBlocked('link', user.dept_code);
             }
             if (/\b(?:facebook|fb|instagram|ig|snapchat|whatsapp|wa\.me|telegram|t\.me)\b/gi.test(safeContent)) {
+                wasPiiShielded = true;
                 safeContent = safeContent.replace(
                     /\b(?:facebook|fb|instagram|ig|snapchat|whatsapp|wa\.me|telegram|t\.me)\b/gi,
                     '[CENSORED SOCIAL]'
@@ -186,12 +203,35 @@ export function registerChatHandlers(
         }
 
         const ts = Date.now();
-        socket.emit('new_message', { id: messageId, authorAlias: user.alias, content: safeContent, timestamp: ts, isMine: true });
-        socket.to(roomId).emit('new_message', { id: messageId, authorAlias: user.alias, content: safeContent, timestamp: ts, isMine: false });
+        const huffmanPacket = CanonicalHuffmanCodec.encodeLiveMessage(safeContent);
+        socket.emit('new_message', {
+            id: messageId,
+            authorAlias: user.alias,
+            huffman: huffmanPacket,
+            piiShielded: wasPiiShielded,
+            timestamp: ts,
+            isMine: true
+        });
+        socket.to(roomId).emit('new_message', {
+            id: messageId,
+            authorAlias: user.alias,
+            huffman: huffmanPacket,
+            piiShielded: wasPiiShielded,
+            timestamp: ts,
+            isMine: false
+        });
 
         await redis.rpush(
             `room_messages:${roomId}`,
-            JSON.stringify({ id: messageId, author_id: user.id, author_alias: user.alias, content: safeContent, timestamp: Date.now() })
+            JSON.stringify({
+                id: messageId,
+                author_id: user.id,
+                author_alias: user.alias,
+                content: safeContent,
+                huffman: huffmanPacket,
+                pii_shielded: wasPiiShielded,
+                timestamp: ts
+            })
         );
         await redis.expire(`room_messages:${roomId}`, 7200);
 
@@ -214,10 +254,11 @@ export function registerChatHandlers(
 
                     const replyId = randomUUID();
                     const replyTs = Date.now();
+                    const replyHuffman = CanonicalHuffmanCodec.encodeLiveMessage(replyText);
                     socket.emit('new_message', {
                         id: replyId,
                         authorAlias: aiSession.aiAlias,
-                        content: replyText,
+                        huffman: replyHuffman,
                         timestamp: replyTs,
                         isMine: false
                     });
@@ -230,6 +271,7 @@ export function registerChatHandlers(
                             author_id: aiSession.aiUserId,
                             author_alias: aiSession.aiAlias,
                             content: replyText,
+                            huffman: replyHuffman,
                             timestamp: replyTs
                         })
                     );

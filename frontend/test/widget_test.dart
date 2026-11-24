@@ -1,5 +1,7 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:frontend/algorithms/benchly_algorithms.dart';
+import 'package:frontend/widgets/chat/chat_message_bubble.dart';
 
 void main() {
   group('Benchly CSE246 Algorithmic Core Verification Suite', () {
@@ -13,6 +15,22 @@ void main() {
       expect(res.shannonTheoremVerified, isTrue);
       expect(res.compressedBits, lessThan(res.originalBits));
       expect(res.compressionSavingsPercent, greaterThan(35.0));
+
+      // Verify live wire packet round-trip with Unicode emojis, Bangla, and single-symbol edge cases
+      for (final msg in const [
+        '💡 Hey bondhu কেমন আছো? 😀🪑',
+        'aaaaa',
+        'X',
+        'Canonical Huffman live socket wire format!',
+      ]) {
+        final wireJson = CanonicalHuffmanEngine.encodeLivePacket(msg).toJson();
+        final parsed = HuffmanWirePacket.tryParse(wireJson);
+        expect(parsed, isNotNull);
+        final decoded = CanonicalHuffmanEngine.decodeLivePacket(parsed!);
+        expect(decoded.decodedText, equals(msg));
+        expect(decoded.bitStream.length, equals(decoded.packet.bitLength));
+        expect(decoded.visualTree.frequency, equals(msg.runes.length));
+      }
     });
 
     test('2. 0/1 Knapsack DP finds global optimum >= Greedy 0/1 density heuristic', () {
@@ -140,6 +158,51 @@ void main() {
       final hull = CampusGeometryEngine.computeGrahamScan(pings);
       expect(hull.hullVertices.length, equals(4));
       expect(hull.hullArea, closeTo(10000.0, 1e-3));
+    });
+
+    testWidgets('7. ChatMessageBubble auto-decodes Huffman wire packet & opens interactive Tree Inspector sheet',
+        (tester) async {
+      const sampleText = 'Meet at EWU bench 💡!';
+      final pkt = CanonicalHuffmanEngine.encodeLivePacket(sampleText);
+      final decoded = CanonicalHuffmanEngine.decodeLivePacket(pkt);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ChatMessageBubble(
+              message: {
+                'id': 'm1',
+                'authorAlias': 'Neon Scholar 19',
+                'content': decoded.decodedText,
+                '_decodedHuffman': decoded,
+                'timestamp': 1764000000000,
+                'isMine': false,
+              },
+              myAlias: 'Silent Panther 42',
+              isGroupLounge: false,
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text(sampleText), findsOneWidget);
+      final chipText = 'Huffman · ${decoded.packet.bitLength}b · Tree';
+      expect(find.text(chipText), findsOneWidget);
+
+      await tester.tap(find.text(chipText));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Canonical Huffman Wire Decoder'), findsOneWidget);
+      expect(find.text('RECEIVED HUFFMAN BITSTREAM'), findsOneWidget);
+      expect(find.text('RECONSTRUCTED PREFIX TREE (PINCH / DRAG)'), findsOneWidget);
+
+      await tester.scrollUntilVisible(
+        find.text('CANONICAL CODEBOOK (SYMBOL → PREFIX CODE)'),
+        200,
+        scrollable: find.descendant(of: find.byType(ListView), matching: find.byType(Scrollable)).first,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('CANONICAL CODEBOOK (SYMBOL → PREFIX CODE)'), findsOneWidget);
     });
   });
 }

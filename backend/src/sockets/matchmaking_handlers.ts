@@ -13,11 +13,12 @@ import {
 } from '../matchmaker';
 import { getRandomIcebreaker } from '../ewu_helper';
 import { AiCampusCompanionEngine } from '../ai_campus_companion';
+import { CanonicalHuffmanCodec } from '../algorithms/huffman_codec';
 import { supabase } from '../supabase';
 import { WebPushService } from '../push_service';
 import { CHAT_DURATION_MS, CHAT_WARNING_MS, SocketState } from './state';
 
-const AI_FALLBACK_DELAY_MS = Math.max(4, parseInt(process.env.AI_FALLBACK_SECONDS || '12', 10) || 12) * 1000;
+const AI_FALLBACK_DELAY_MS = Math.max(25, parseInt(process.env.AI_FALLBACK_SECONDS || '25', 10) || 25) * 1000;
 
 export function registerMatchmakingHandlers(
     io: Server,
@@ -129,10 +130,11 @@ export function registerMatchmakingHandlers(
                         socket.emit('partner_stopped_typing');
                         const openId = randomUUID();
                         const ts = Date.now();
+                        const openHuffman = CanonicalHuffmanCodec.encodeLiveMessage(opening);
                         socket.emit('new_message', {
                             id: openId,
                             authorAlias: aiSession.aiAlias,
-                            content: opening,
+                            huffman: openHuffman,
                             timestamp: ts,
                             isMine: false
                         });
@@ -145,6 +147,7 @@ export function registerMatchmakingHandlers(
                                 author_id: aiSession.aiUserId,
                                 author_alias: aiSession.aiAlias,
                                 content: opening,
+                                huffman: openHuffman,
                                 timestamp: ts
                             })
                         );

@@ -131,6 +131,18 @@ test('Huffman: visual tree counts emoji as whole symbols', () => {
     assert.equal(v.tree.frequency, 5);
 });
 
+test('Huffman: live wire message round-trips emojis, Bangla & single-char strings and rejects malformed packets', () => {
+    for (const msg of ['💡 Hey bondhu কেমন আছো? 😀🪑', 'aaaaa', 'A', '0101010101']) {
+        const packet = CanonicalHuffmanCodec.encodeLiveMessage(msg);
+        assert.equal(packet.algorithm, 'canonical-huffman');
+        assert.ok(packet.bitLength > 0);
+        assert.equal(CanonicalHuffmanCodec.decodeLiveMessage(packet), msg);
+    }
+    assert.equal(CanonicalHuffmanCodec.decodeLiveMessage(CanonicalHuffmanCodec.encodeLiveMessage('')), '');
+    assert.throws(() => CanonicalHuffmanCodec.decodeLiveMessage({ packedBase64: 'AA==', codeLengths: { a: 1 }, originalLength: 9999 }));
+    assert.throws(() => CanonicalHuffmanCodec.decodeLiveMessage({ packedBase64: 'AA==', codeLengths: { a: 1 }, originalLength: 20 }));
+});
+
 /* ---------- Knapsack / coin change / subset sum (L8, L10, L11, L21) ---------- */
 const bruteKnapsack = (perks: PerkCandidate[], W: number) => {
     let best = 0;

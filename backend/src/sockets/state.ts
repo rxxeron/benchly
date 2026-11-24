@@ -88,7 +88,14 @@ export function createSocketState(deps: { supabase: SupabaseClient; redis: Redis
             const messagesList = rawMsgs
                 .map((m: string) => {
                     try {
-                        return JSON.parse(m);
+                        const parsed = JSON.parse(m);
+                        if (parsed && typeof parsed === 'object') {
+                            // Strip transient per-message wire packet before sealing the whole-room archive
+                            // so high-entropy Base64 frames don't bloat Supabase rows or skew room entropy stats.
+                            const { huffman: _wireHuffman, ...cleanMsg } = parsed;
+                            return cleanMsg;
+                        }
+                        return parsed;
                     } catch {
                         return null;
                     }

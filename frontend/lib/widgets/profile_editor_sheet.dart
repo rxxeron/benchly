@@ -308,7 +308,7 @@ class _ProfileEditorSheetBodyState extends State<_ProfileEditorSheetBody> {
                         Text(
                           'Customize Your Bench Vibe',
                           style: TextStyle(
-                            color: const Color(0xFF1E1B18),
+                            color: Color(0xFF1E1B18),
                             fontSize: 18,
                             fontWeight: FontWeight.w800,
                             letterSpacing: -0.3,
@@ -317,14 +317,14 @@ class _ProfileEditorSheetBodyState extends State<_ProfileEditorSheetBody> {
                         SizedBox(height: 2),
                         Text(
                           'Change nickname anytime • Private info only for fun guesses',
-                          style: TextStyle(color: const Color(0xFF575049), fontSize: 11.5),
+                          style: TextStyle(color: Color(0xFF575049), fontSize: 11.5),
                         ),
                       ],
                     ),
                   ),
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close_rounded, color: const Color(0xFF575049)),
+                    icon: const Icon(Icons.close_rounded, color: Color(0xFF575049)),
                   ),
                 ],
               ),
@@ -336,7 +336,7 @@ class _ProfileEditorSheetBodyState extends State<_ProfileEditorSheetBody> {
                   const Text(
                     'NICKNAME (ANYTIME)',
                     style: TextStyle(
-                      color: const Color(0xFF575049),
+                      color: Color(0xFF575049),
                       fontSize: 11,
                       fontWeight: FontWeight.w800,
                       letterSpacing: 1.0,
@@ -377,7 +377,7 @@ class _ProfileEditorSheetBodyState extends State<_ProfileEditorSheetBody> {
               TextField(
                 controller: _aliasController,
                 maxLength: 28,
-                style: const TextStyle(color: const Color(0xFF1E1B18), fontWeight: FontWeight.w700, fontSize: 15),
+                style: const TextStyle(color: Color(0xFF1E1B18), fontWeight: FontWeight.w700, fontSize: 15),
                 decoration: InputDecoration(
                   counterText: '',
                   hintText: 'Pick a server vibe or type your own...',
@@ -509,7 +509,7 @@ class _ProfileEditorSheetBodyState extends State<_ProfileEditorSheetBody> {
                           const Text(
                             'REAL AGE',
                             style: TextStyle(
-                              color: const Color(0xFF575049),
+                              color: Color(0xFF575049),
                               fontSize: 11,
                               fontWeight: FontWeight.w800,
                               letterSpacing: 1.0,
@@ -520,7 +520,7 @@ class _ProfileEditorSheetBodyState extends State<_ProfileEditorSheetBody> {
                             controller: _ageController,
                             keyboardType: TextInputType.number,
                             maxLength: 2,
-                            style: const TextStyle(color: const Color(0xFF1E1B18), fontWeight: FontWeight.w700, fontSize: 14),
+                            style: const TextStyle(color: Color(0xFF1E1B18), fontWeight: FontWeight.w700, fontSize: 14),
                             decoration: InputDecoration(
                               counterText: '',
                               hintText: 'e.g. 21',
@@ -554,7 +554,7 @@ class _ProfileEditorSheetBodyState extends State<_ProfileEditorSheetBody> {
               const Text(
                 'REAL NAME (HIDDEN — FOR GUESSING GAME)',
                 style: TextStyle(
-                  color: const Color(0xFF575049),
+                  color: Color(0xFF575049),
                   fontSize: 11,
                   fontWeight: FontWeight.w800,
                   letterSpacing: 1.0,
@@ -564,7 +564,7 @@ class _ProfileEditorSheetBodyState extends State<_ProfileEditorSheetBody> {
               TextField(
                 controller: _realNameController,
                 maxLength: 40,
-                style: const TextStyle(color: const Color(0xFF1E1B18), fontWeight: FontWeight.w600, fontSize: 14),
+                style: const TextStyle(color: Color(0xFF1E1B18), fontWeight: FontWeight.w600, fontSize: 14),
                 decoration: InputDecoration(
                   counterText: '',
                   hintText: 'Optional — never shown unless someone guesses right!',
@@ -607,14 +607,14 @@ class _ProfileEditorSheetBodyState extends State<_ProfileEditorSheetBody> {
                           Text(
                             'Allow Fun Guessing in Chat',
                             style: TextStyle(
-                              color: const Color(0xFF1E1B18),
+                              color: Color(0xFF1E1B18),
                               fontWeight: FontWeight.w700,
                               fontSize: 13,
                             ),
                           ),
                           Text(
                             'Partners can guess your name, age, dept or semester — server checks secretly!',
-                            style: TextStyle(color: const Color(0xFF575049), fontSize: 11),
+                            style: TextStyle(color: Color(0xFF575049), fontSize: 11),
                           ),
                         ],
                       ),
@@ -677,7 +677,7 @@ class _ProfileEditorSheetBodyState extends State<_ProfileEditorSheetBody> {
         Text(
           label,
           style: const TextStyle(
-            color: const Color(0xFF575049),
+            color: Color(0xFF575049),
             fontSize: 11,
             fontWeight: FontWeight.w800,
             letterSpacing: 1.0,
@@ -701,7 +701,7 @@ class _ProfileEditorSheetBodyState extends State<_ProfileEditorSheetBody> {
               isExpanded: true,
               dropdownColor: const Color(0xFFFFF2DF),
               style: const TextStyle(
-                color: const Color(0xFF1E1B18),
+                color: Color(0xFF1E1B18),
                 fontWeight: FontWeight.w700,
                 fontSize: 13,
               ),

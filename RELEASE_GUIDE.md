@@ -34,7 +34,7 @@ SUPABASE_SERVICE_ROLE_KEY=<your-service-role-key>
 ARCHIVE_MASTER_KEY=<generate-a-strong-32+-char-random-secret>
 ADMIN_SECRET=<generate-a-strong-admin-api-secret>
 AI_BENCH_MODEL=gemma4:12b
-AI_FALLBACK_SECONDS=12
+AI_FALLBACK_SECONDS=25
 OLLAMA_HOSTS=https://labpc1.benchly.live,https://labpc25.benchly.live,https://labpc26.benchly.live,https://labpc31.benchly.live
 ```
 

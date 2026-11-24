@@ -17,6 +17,7 @@ class WelcomeScreen extends StatefulWidget {
 }
 
 class _WelcomeScreenState extends State<WelcomeScreen> {
+  static final RegExp _ewuEmailRegex = RegExp(r'^[a-z0-9._%+-]+@std\.ewubd\.edu$');
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   bool _isLoading = false;
@@ -34,8 +35,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
 
   Future<void> _forgotPassword() async {
     final email = _emailController.text.trim().toLowerCase();
-    final isAllowed = email == 'rhrakibulhasan279@gmail.com' ||
-        RegExp(r'^[a-z0-9._%+-]+@std\.ewubd\.edu$').hasMatch(email);
+    final isAllowed = email == 'rhrakibulhasan279@gmail.com' || _ewuEmailRegex.hasMatch(email);
     if (!isAllowed) {
       setState(() {
         _infoText = null;
@@ -77,8 +77,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
       return;
     }
 
-    final isAllowed = email == 'rhrakibulhasan279@gmail.com' ||
-        RegExp(r'^[a-z0-9._%+-]+@std\.ewubd\.edu$').hasMatch(email);
+    final isAllowed = email == 'rhrakibulhasan279@gmail.com' || _ewuEmailRegex.hasMatch(email);
     if (!isAllowed) {
       setState(() {
         _infoText = null;
@@ -230,13 +229,15 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                     child: Stack(
                       alignment: Alignment.center,
                       children: [
-                        SizedBox(
-                          width: 112,
-                          height: 112,
-                          child: Lottie.asset(
-                            'assets/animations/radar_pulse.json',
-                            fit: BoxFit.contain,
-                            repeat: true,
+                        RepaintBoundary(
+                          child: SizedBox(
+                            width: 112,
+                            height: 112,
+                            child: Lottie.asset(
+                              'assets/animations/radar_pulse.json',
+                              fit: BoxFit.contain,
+                              repeat: true,
+                            ),
                           ),
                         ),
                         Container(
@@ -273,7 +274,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                       fontSize: 30,
                       fontWeight: FontWeight.w800,
                       letterSpacing: -0.8,
-                      color: const Color(0xFF1E1B18),
+                      color: Color(0xFF1E1B18),
                     ),
                   ),
                 ),

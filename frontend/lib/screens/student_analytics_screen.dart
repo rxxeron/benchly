@@ -241,7 +241,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
-                color: const Color(0xFF1E1B18),
+                color: Color(0xFF1E1B18),
                 letterSpacing: -0.4,
               ),
             ),
@@ -250,7 +250,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
         actions: [
           IconButton(
             tooltip: 'Refresh Stats',
-            icon: const Icon(Icons.refresh_rounded, color: const Color(0xFF44403C), size: 20),
+            icon: const Icon(Icons.refresh_rounded, color: Color(0xFF44403C), size: 20),
             onPressed: () => _fetchAnalytics(),
           ),
         ],
@@ -372,7 +372,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                         style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w800,
-                          color: const Color(0xFF1E1B18),
+                          color: Color(0xFF1E1B18),
                           letterSpacing: -0.3,
                         ),
                         maxLines: 1,
@@ -595,55 +595,78 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
     final durationSec = _stats['total_duration_seconds'] ?? 0;
     final totalChats = _stats['total_chats'] ?? 0;
 
-    return GridView.count(
-      crossAxisCount: 2,
-      crossAxisSpacing: 12,
-      mainAxisSpacing: 12,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      childAspectRatio: 1.28,
+    return Column(
       children: [
-        _buildMetricCard(
-          title: 'People Talked To',
-          value: '$people',
-          icon: Icons.people_alt_rounded,
-          accentColor: const Color(0xFF0FB881), // Emerald
-          subtitle: '$totalChats bench sessions',
+        Row(
+          children: [
+            Expanded(
+              child: _buildMetricCard(
+                title: 'People Talked To',
+                value: '$people',
+                icon: Icons.people_alt_rounded,
+                accentColor: const Color(0xFF0FB881),
+                subtitle: '$totalChats bench sessions',
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildMetricCard(
+                title: 'Total Adda Time',
+                value: _formatDuration(durationSec),
+                icon: Icons.timer_outlined,
+                accentColor: const Color(0xFF6366F1),
+                subtitle: 'Active time on benches',
+              ),
+            ),
+          ],
         ),
-        _buildMetricCard(
-          title: 'Total Adda Time',
-          value: _formatDuration(durationSec),
-          icon: Icons.timer_outlined,
-          accentColor: const Color(0xFF6366F1), // Indigo
-          subtitle: 'Active time on benches',
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: _buildMetricCard(
+                title: 'Messages Sent',
+                value: '$sent',
+                icon: Icons.arrow_upward_rounded,
+                accentColor: const Color(0xFF0284C7),
+                subtitle: 'Your bench thoughts',
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildMetricCard(
+                title: 'Messages Received',
+                value: '$received',
+                icon: Icons.arrow_downward_rounded,
+                accentColor: const Color(0xFFEC4899),
+                subtitle: 'From your partners',
+              ),
+            ),
+          ],
         ),
-        _buildMetricCard(
-          title: 'Messages Sent',
-          value: '$sent',
-          icon: Icons.arrow_upward_rounded,
-          accentColor: const Color(0xFF0284C7), // Sky Blue
-          subtitle: 'Your bench thoughts',
-        ),
-        _buildMetricCard(
-          title: 'Messages Received',
-          value: '$received',
-          icon: Icons.arrow_downward_rounded,
-          accentColor: const Color(0xFFEC4899), // Pink
-          subtitle: 'From your partners',
-        ),
-        _buildMetricCard(
-          title: 'Avg Messages / Chat',
-          value: '$avgPerChat',
-          icon: Icons.chat_bubble_outline_rounded,
-          accentColor: const Color(0xFFF59E0B), // Amber
-          subtitle: 'Conversation depth',
-        ),
-        _buildMetricCard(
-          title: 'Total Messages',
-          value: '${sent + received}',
-          icon: Icons.forum_rounded,
-          accentColor: const Color(0xFF8B5CF6), // Purple
-          subtitle: 'Exchanged in $_periodLabel',
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: _buildMetricCard(
+                title: 'Avg Messages / Chat',
+                value: '$avgPerChat',
+                icon: Icons.chat_bubble_outline_rounded,
+                accentColor: const Color(0xFFF59E0B),
+                subtitle: 'Conversation depth',
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildMetricCard(
+                title: 'Total Messages',
+                value: '${sent + received}',
+                icon: Icons.forum_rounded,
+                accentColor: const Color(0xFF8B5CF6),
+                subtitle: 'Exchanged in $_periodLabel',
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -699,7 +722,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                   style: const TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.w800,
-                    color: const Color(0xFF1E1B18),
+                    color: Color(0xFF1E1B18),
                     letterSpacing: -0.4,
                   ),
                 ),
@@ -743,14 +766,14 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
-                  color: const Color(0xFF1E1B18),
+                  color: Color(0xFF1E1B18),
                 ),
               ),
               Text(
                 'Sent vs Received',
                 style: TextStyle(
                   fontSize: 11,
-                  color: const Color(0xFF78716C),
+                  color: Color(0xFF78716C),
                 ),
               ),
             ],
@@ -784,7 +807,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                   const SizedBox(width: 6),
                   Text(
                     'Sent: $sent (${(sentPct * 100).round()}%)',
-                    style: const TextStyle(fontSize: 11, color: const Color(0xFF44403C)),
+                    style: const TextStyle(fontSize: 11, color: Color(0xFF44403C)),
                   ),
                 ],
               ),
@@ -794,7 +817,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                   const SizedBox(width: 6),
                   Text(
                     'Received: $received (${(recvPct * 100).round()}%)',
-                    style: const TextStyle(fontSize: 11, color: const Color(0xFF44403C)),
+                    style: const TextStyle(fontSize: 11, color: Color(0xFF44403C)),
                   ),
                 ],
               ),
@@ -844,7 +867,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
-                      color: const Color(0xFF1E1B18),
+                      color: Color(0xFF1E1B18),
                     ),
                   ),
                 ],
@@ -882,7 +905,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                       const SizedBox(height: 4),
                       Text(
                         '$_totalReferrals',
-                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: const Color(0xFF1E1B18)),
+                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Color(0xFF1E1B18)),
                       ),
                     ],
                   ),
@@ -948,7 +971,7 @@ class _StudentAnalyticsScreenState extends State<StudentAnalyticsScreen> {
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
-                  color: const Color(0xFF1E1B18),
+                  color: Color(0xFF1E1B18),
                 ),
               ),
             ],

@@ -32,7 +32,7 @@ class RiveLottieRadarBeacon extends StatefulWidget {
 class _RiveLottieRadarBeaconState extends State<RiveLottieRadarBeacon>
     with SingleTickerProviderStateMixin {
   late final AnimationController _orbitController;
-  Offset _pointerTilt = Offset.zero;
+  final ValueNotifier<Offset> _pointerTiltNotifier = ValueNotifier<Offset>(Offset.zero);
   double _burstEnergy = 0.0;
 
   @override
@@ -47,6 +47,7 @@ class _RiveLottieRadarBeaconState extends State<RiveLottieRadarBeacon>
   @override
   void dispose() {
     _orbitController.dispose();
+    _pointerTiltNotifier.dispose();
     super.dispose();
   }
 
@@ -63,18 +64,102 @@ class _RiveLottieRadarBeaconState extends State<RiveLottieRadarBeacon>
     final isGroup = widget.state == RadarMachineState.groupHauntClustering;
     final primaryColor = isGroup ? const Color(0xFF6366F1) : const Color(0xFF0FB881);
 
+    final radarStack = RepaintBoundary(
+      child: SizedBox(
+        width: 210,
+        height: 210,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // 1. Custom 60fps State-Machine Orbital Graph Painter isolated on its own layer
+            RepaintBoundary(
+              child: AnimatedBuilder(
+                animation: _orbitController,
+                builder: (context, _) {
+                  return CustomPaint(
+                    size: const Size(210, 210),
+                    painter: _RadarStateMachinePainter(
+                      progress: _orbitController.value,
+                      primaryColor: primaryColor,
+                      isGroupMode: isGroup,
+                      burstEnergy: _burstEnergy,
+                    ),
+                  );
+                },
+              ),
+            ),
+
+            // 2. Native Lottie Vector Radar Pulse Overlay
+            RepaintBoundary(
+              child: SizedBox(
+                width: 150,
+                height: 150,
+                child: Lottie.asset(
+                  'assets/animations/radar_pulse.json',
+                  fit: BoxFit.contain,
+                  repeat: true,
+                ),
+              ),
+            ),
+
+            // 3. Central Interactive Core Badge
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 220),
+              width: 64 + (_burstEnergy * 10),
+              height: 64 + (_burstEnergy * 10),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: isGroup
+                      ? const [Color(0xFF6366F1), Color(0xFF8B5CF6)]
+                      : const [Color(0xFF0FB881), Color(0xFF059669)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: primaryColor.withValues(alpha: 0.45),
+                    blurRadius: 22,
+                    spreadRadius: 2,
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    isGroup ? Icons.groups_rounded : Icons.radar_rounded,
+                    color: const Color(0xFF1E1B18),
+                    size: 24,
+                  ),
+                  Text(
+                    '${widget.countdownSeconds}s',
+                    style: const TextStyle(
+                      color: Color(0xFF1E1B18),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
     return MouseRegion(
       onHover: (e) {
         final dx = ((e.localPosition.dx - 110) / 110).clamp(-1.0, 1.0);
         final dy = ((e.localPosition.dy - 110) / 110).clamp(-1.0, 1.0);
-        setState(() => _pointerTilt = Offset(dx * 0.14, -dy * 0.14));
+        _pointerTiltNotifier.value = Offset(dx * 0.14, -dy * 0.14);
       },
-      onExit: (_) => setState(() => _pointerTilt = Offset.zero),
+      onExit: (_) => _pointerTiltNotifier.value = Offset.zero,
       child: GestureDetector(
         onTap: _triggerEnergyPulse,
-        child: TweenAnimationBuilder<Offset>(
-          tween: Tween<Offset>(begin: Offset.zero, end: _pointerTilt),
-          duration: const Duration(milliseconds: 180),
+        child: ValueListenableBuilder<Offset>(
+          valueListenable: _pointerTiltNotifier,
+          child: radarStack,
           builder: (context, tilt, child) {
             return Transform(
               alignment: Alignment.center,
@@ -85,83 +170,6 @@ class _RiveLottieRadarBeaconState extends State<RiveLottieRadarBeacon>
               child: child,
             );
           },
-          child: SizedBox(
-            width: 210,
-            height: 210,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                // 1. Custom 60fps State-Machine Orbital Graph Painter
-                AnimatedBuilder(
-                  animation: _orbitController,
-                  builder: (context, _) {
-                    return CustomPaint(
-                      size: const Size(210, 210),
-                      painter: _RadarStateMachinePainter(
-                        progress: _orbitController.value,
-                        primaryColor: primaryColor,
-                        isGroupMode: isGroup,
-                        burstEnergy: _burstEnergy,
-                      ),
-                    );
-                  },
-                ),
-
-                // 2. Native Lottie Vector Radar Pulse Overlay
-                SizedBox(
-                  width: 150,
-                  height: 150,
-                  child: Lottie.asset(
-                    'assets/animations/radar_pulse.json',
-                    fit: BoxFit.contain,
-                    repeat: true,
-                  ),
-                ),
-
-                // 3. Central Interactive Core Badge
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 220),
-                  width: 64 + (_burstEnergy * 10),
-                  height: 64 + (_burstEnergy * 10),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: LinearGradient(
-                      colors: isGroup
-                          ? const [Color(0xFF6366F1), Color(0xFF8B5CF6)]
-                          : const [Color(0xFF0FB881), Color(0xFF059669)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: primaryColor.withValues(alpha: 0.45),
-                        blurRadius: 22,
-                        spreadRadius: 2,
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        isGroup ? Icons.groups_rounded : Icons.radar_rounded,
-                        color: const Color(0xFF1E1B18),
-                        size: 24,
-                      ),
-                      Text(
-                        '${widget.countdownSeconds}s',
-                        style: const TextStyle(
-                          color: const Color(0xFF1E1B18),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
         ),
       ),
     );

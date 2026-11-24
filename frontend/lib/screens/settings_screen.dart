@@ -36,34 +36,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (user == null) return;
 
     try {
-      final data = await Supabase.instance.client
-          .from('users')
-          .select('generated_alias, dept_code, semester_intake, gender, age_range, match_preference')
-          .eq('id', user.id)
-          .single();
+      final token = Supabase.instance.client.auth.currentSession?.accessToken;
+      final results = await Future.wait<dynamic>([
+        Supabase.instance.client
+            .from('users')
+            .select('generated_alias, dept_code, semester_intake, gender, age_range, match_preference')
+            .eq('id', user.id)
+            .single(),
+        if (token != null)
+          http
+              .get(
+                Uri.parse('${AppConfig.socketUrl}/api/profile/me'),
+                headers: {'Authorization': 'Bearer $token'},
+              )
+              .catchError((_) => http.Response('{}', 500)),
+      ]);
 
+      final data = results[0] as Map<String, dynamic>;
       String? admittedSem;
       String realName = '';
       int? realAge;
       bool allowGuess = true;
 
-      final token = Supabase.instance.client.auth.currentSession?.accessToken;
-      if (token != null) {
-        try {
-          final res = await http.get(
-            Uri.parse('${AppConfig.socketUrl}/api/profile/me'),
-            headers: {'Authorization': 'Bearer $token'},
-          );
-          if (res.statusCode == 200) {
-            final serverProfile = jsonDecode(res.body) as Map<String, dynamic>;
-            admittedSem = serverProfile['admittedSemester']?.toString();
-            realName = (serverProfile['realName'] ?? '').toString();
-            if (serverProfile['realAge'] != null) {
-              realAge = int.tryParse(serverProfile['realAge'].toString());
-            }
-            allowGuess = serverProfile['allowGuessing'] != false;
+      if (results.length > 1) {
+        final res = results[1] as http.Response;
+        if (res.statusCode == 200) {
+          final serverProfile = jsonDecode(res.body) as Map<String, dynamic>;
+          admittedSem = serverProfile['admittedSemester']?.toString();
+          realName = (serverProfile['realName'] ?? '').toString();
+          if (serverProfile['realAge'] != null) {
+            realAge = int.tryParse(serverProfile['realAge'].toString());
           }
-        } catch (_) {}
+          allowGuess = serverProfile['allowGuessing'] != false;
+        }
       }
 
       if (mounted) {
@@ -138,6 +143,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _showAliasHistoryModal() {
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return;
+    final historyFuture = Supabase.instance.client
+        .from('alias_history')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', ascending: false);
 
     showModalBottomSheet(
       context: context,
@@ -145,11 +155,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) {
         return FutureBuilder<List<Map<String, dynamic>>>(
-          future: Supabase.instance.client
-              .from('alias_history')
-              .select('*')
-              .eq('user_id', user.id)
-              .order('created_at', ascending: false),
+          future: historyFuture,
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const SizedBox(
@@ -170,7 +176,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       SizedBox(width: 8),
                       Text(
                         'Alias Rotation History',
-                        style: TextStyle(color: const Color(0xFF1E1B18), fontSize: 16, fontWeight: FontWeight.bold),
+                        style: TextStyle(color: Color(0xFF1E1B18), fontSize: 16, fontWeight: FontWeight.bold),
                       ),
                     ],
                   ),
@@ -205,7 +211,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             contentPadding: EdgeInsets.zero,
                             title: Text(
                               '${item['old_alias']} ➔ ${item['new_alias']}',
-                              style: const TextStyle(color: const Color(0xFF1E1B18), fontSize: 13, fontWeight: FontWeight.w600),
+                              style: const TextStyle(color: Color(0xFF1E1B18), fontSize: 13, fontWeight: FontWeight.w600),
                             ),
                             subtitle: Text('$type • $dateStr', style: TextStyle(color: Color(0xFF1E1B18).withValues(alpha: 0.50), fontSize: 11)),
                           );
@@ -233,12 +239,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFFFFFFFF),
-        title: const Text('Delete Account', style: TextStyle(color: const Color(0xFF1E1B18))),
-        content: const Text('Are you sure you want to delete your account? This action cannot be undone.', style: TextStyle(color: const Color(0xFF44403C))),
+        title: const Text('Delete Account', style: TextStyle(color: Color(0xFF1E1B18))),
+        content: const Text('Are you sure you want to delete your account? This action cannot be undone.', style: TextStyle(color: Color(0xFF44403C))),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel', style: TextStyle(color: const Color(0xFF1E1B18))),
+            child: const Text('Cancel', style: TextStyle(color: Color(0xFF1E1B18))),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
@@ -376,7 +382,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           style: TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.w800,
-            color: const Color(0xFF1E1B18),
+            color: Color(0xFF1E1B18),
           ),
         ),
         backgroundColor: const Color(0xFFFFF9F0),
@@ -459,7 +465,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 title: 'Alias Rotation History',
                 subtitle: const Text(
                   'Audit log of previous nicknames (Safety record)',
-                  style: TextStyle(color: const Color(0xFF78716C), fontSize: 11),
+                  style: TextStyle(color: Color(0xFF78716C), fontSize: 11),
                 ),
                 trailing: const Icon(Icons.history_rounded, size: 18, color: Color(0xFF0FB881)),
                 onTap: _showAliasHistoryModal,
@@ -469,7 +475,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 title: 'Gender',
                 subtitle: const Text(
                   'Locked after onboarding for campus safety',
-                  style: TextStyle(color: const Color(0xFF78716C), fontSize: 11),
+                  style: TextStyle(color: Color(0xFF78716C), fontSize: 11),
                 ),
                 trailing: Text(
                   _gender == null
@@ -489,7 +495,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   hint: Text('Select', style: TextStyle(color: Color(0xFF1E1B18).withValues(alpha: 0.60))),
                   dropdownColor: const Color(0xFFFFFFFF),
                   underline: const SizedBox(),
-                  style: const TextStyle(color: const Color(0xFF1E1B18)),
+                  style: const TextStyle(color: Color(0xFF1E1B18)),
                   items: const [
                     DropdownMenuItem(value: '18-19', child: Text('18-19')),
                     DropdownMenuItem(value: '20-21', child: Text('20-21')),
@@ -511,7 +517,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('Default Match Filter', style: TextStyle(color: const Color(0xFF1E1B18), fontSize: 15, fontWeight: FontWeight.w500)),
+                      const Text('Default Match Filter', style: TextStyle(color: Color(0xFF1E1B18), fontSize: 15, fontWeight: FontWeight.w500)),
                       Row(
                         children: [
                           ('anyone', 'Anyone'),

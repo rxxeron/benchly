@@ -8,6 +8,7 @@ import type { AnalyticsEngine } from '../analytics';
 import { getRandomIcebreaker } from '../ewu_helper';
 import { generateServerNickname } from '../nickname_engine';
 import { WebPushService } from '../push_service';
+import { CanonicalHuffmanCodec } from '../algorithms/huffman_codec';
 import { CHAT_DURATION_MS, CHAT_WARNING_MS, DISCONNECT_GRACE_MS, SocketState } from './state';
 import { registerMatchmakingHandlers, startBatchMatchLoop } from './matchmaking_handlers';
 import { registerGameHandlers } from './game_handlers';
@@ -74,10 +75,15 @@ export function registerSocketGateway(
                         .map((m: string) => {
                             try {
                                 const parsed = JSON.parse(m);
+                                const huffman =
+                                    parsed.huffman ||
+                                    CanonicalHuffmanCodec.encodeLiveMessage(parsed.content || '');
                                 return {
                                     id: parsed.id,
                                     authorAlias: parsed.author_alias || parsed.authorAlias || 'Anonymous',
-                                    content: parsed.content || '',
+                                    huffman,
+                                    piiShielded: parsed.pii_shielded === true,
+                                    isMine: parsed.author_id === profile.id,
                                     timestamp: parsed.timestamp || Date.now()
                                 };
                             } catch {

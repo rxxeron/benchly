@@ -63,7 +63,7 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
                     fontSize: 26,
                     fontWeight: FontWeight.w800,
                     letterSpacing: -0.6,
-                    color: const Color(0xFF1E1B18),
+                    color: Color(0xFF1E1B18),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -149,7 +149,7 @@ class _GenderSelectionScreenState extends State<GenderSelectionScreen> {
                     style: const TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w700,
-                      color: const Color(0xFF1E1B18),
+                      color: Color(0xFF1E1B18),
                     ),
                   ),
                   const SizedBox(height: 3),

@@ -6,10 +6,12 @@ import 'screens/auth_wrapper.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  try {
-    await dotenv.load(fileName: '.env');
-  } catch (_) {
-    // Prefer --dart-define / --dart-define-from-file in production builds so .env is never bundled as an asset.
+  if (!const bool.hasEnvironment('SUPABASE_URL')) {
+    try {
+      await dotenv.load(fileName: '.env');
+    } catch (_) {
+      // Prefer --dart-define / --dart-define-from-file in production builds so .env is never bundled as an asset.
+    }
   }
   await Supabase.initialize(
     url: AppConfig.supabaseUrl,

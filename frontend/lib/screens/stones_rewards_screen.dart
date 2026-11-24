@@ -25,6 +25,23 @@ class _StonesRewardsScreenState extends State<StonesRewardsScreen> {
   Set<String> _equippedPerkIds = {};
   final Map<String, int> _freeSpotsLeftByPerk = {};
   final Map<String, int> _freeLimitByPerk = {};
+  List<StonePerkItem> _cachedLockedPerks = const [];
+  KnapsackComparisonResult? _cachedBestBundle;
+
+  void _recomputeBestBundle() {
+    if (_catalogPerks.isEmpty) {
+      _cachedLockedPerks = const [];
+      _cachedBestBundle = null;
+      return;
+    }
+    _cachedLockedPerks = _catalogPerks.where((p) => !_unlockedPerkIds.contains(p.id)).toList(growable: false);
+    _cachedBestBundle = (_cachedLockedPerks.isNotEmpty && _liveStonesBalance > 0)
+        ? KnapsackStonesEngine.solvePerkLoadout(
+            items: _cachedLockedPerks,
+            walletCapacity: _liveStonesBalance,
+          )
+        : null;
+  }
 
   @override
   void initState() {
@@ -34,72 +51,82 @@ class _StonesRewardsScreenState extends State<StonesRewardsScreen> {
 
   Future<void> _loadLiveStonesData() async {
     setState(() => _isLoading = true);
-    final user = Supabase.instance.client.auth.currentUser;
-
-    if (user != null) {
-      try {
-        final profile = await Supabase.instance.client
-            .from('users')
-            .select('stones_balance, streak_count, total_referrals')
-            .eq('id', user.id)
-            .maybeSingle();
-
-        if (profile != null && mounted) {
-          _liveStonesBalance = (profile['stones_balance'] as num?)?.toInt() ?? 10;
-          _streakCount = (profile['streak_count'] as num?)?.toInt() ?? 0;
-          _totalReferrals = (profile['total_referrals'] as num?)?.toInt() ?? 0;
-        }
-      } catch (_) {}
-
-      try {
-        final rows = await Supabase.instance.client
-            .from('user_perks')
-            .select('perk_id, is_equipped')
-            .eq('user_id', user.id);
-
-        final unlocked = <String>{};
-        final equipped = <String>{};
-        for (final r in rows) {
-          final pid = r['perk_id']?.toString() ?? '';
-          if (pid.isNotEmpty) {
-            unlocked.add(pid);
-            if (r['is_equipped'] == true) equipped.add(pid);
-          }
-        }
-        _unlockedPerkIds = unlocked;
-        _equippedPerkIds = equipped;
-      } catch (_) {}
-    }
+    final client = Supabase.instance.client;
+    final user = client.auth.currentUser;
 
     var loadedPerks = <StonePerkItem>[];
-    try {
-      final rows = await Supabase.instance.client
-          .from('stone_perks')
-          .select('id, name, category, stone_cost, engagement_boost, icon_emoji, free_claim_limit, claimed_count')
-          .eq('is_active', true)
-          .order('free_claim_limit', ascending: false)
-          .order('stone_cost', ascending: true);
 
-      _freeSpotsLeftByPerk.clear();
-      _freeLimitByPerk.clear();
-      loadedPerks = rows.map((r) {
-        final pid = r['id'].toString();
-        final limit = (r['free_claim_limit'] as num?)?.toInt() ?? 0;
-        final claimed = (r['claimed_count'] as num?)?.toInt() ?? 0;
-        if (limit > 0) {
-          _freeLimitByPerk[pid] = limit;
-          _freeSpotsLeftByPerk[pid] = (limit - claimed).clamp(0, limit);
-        }
-        return StonePerkItem(
-          id: pid,
-          name: r['name'].toString(),
-          category: r['category'].toString(),
-          stoneCost: (r['stone_cost'] as num).toInt(),
-          engagementBoost: (r['engagement_boost'] as num).toInt(),
-          iconEmoji: r['icon_emoji']?.toString() ?? '💎',
-        );
-      }).toList();
-    } catch (_) {
+    // Fetch profile, owned perks, and active shop catalog concurrently instead of 3 sequential waterfalls
+    await Future.wait([
+      if (user != null)
+        (() async {
+          try {
+            final profile = await client
+                .from('users')
+                .select('stones_balance, streak_count, total_referrals')
+                .eq('id', user.id)
+                .maybeSingle();
+            if (profile != null && mounted) {
+              _liveStonesBalance = (profile['stones_balance'] as num?)?.toInt() ?? 10;
+              _streakCount = (profile['streak_count'] as num?)?.toInt() ?? 0;
+              _totalReferrals = (profile['total_referrals'] as num?)?.toInt() ?? 0;
+            }
+          } catch (_) {}
+        })(),
+      if (user != null)
+        (() async {
+          try {
+            final rows = await client
+                .from('user_perks')
+                .select('perk_id, is_equipped')
+                .eq('user_id', user.id);
+            final unlocked = <String>{};
+            final equipped = <String>{};
+            for (final r in rows) {
+              final pid = r['perk_id']?.toString() ?? '';
+              if (pid.isNotEmpty) {
+                unlocked.add(pid);
+                if (r['is_equipped'] == true) equipped.add(pid);
+              }
+            }
+            _unlockedPerkIds = unlocked;
+            _equippedPerkIds = equipped;
+          } catch (_) {}
+        })(),
+      (() async {
+        try {
+          final rows = await client
+              .from('stone_perks')
+              .select(
+                  'id, name, category, stone_cost, engagement_boost, icon_emoji, free_claim_limit, claimed_count')
+              .eq('is_active', true)
+              .order('free_claim_limit', ascending: false)
+              .order('stone_cost', ascending: true);
+
+          _freeSpotsLeftByPerk.clear();
+          _freeLimitByPerk.clear();
+          loadedPerks = rows.map((r) {
+            final pid = r['id'].toString();
+            final limit = (r['free_claim_limit'] as num?)?.toInt() ?? 0;
+            final claimed = (r['claimed_count'] as num?)?.toInt() ?? 0;
+            if (limit > 0) {
+              _freeLimitByPerk[pid] = limit;
+              _freeSpotsLeftByPerk[pid] = (limit - claimed).clamp(0, limit);
+            }
+            return StonePerkItem(
+              id: pid,
+              name: r['name'].toString(),
+              category: r['category'].toString(),
+              stoneCost: (r['stone_cost'] as num).toInt(),
+              engagementBoost: (r['engagement_boost'] as num).toInt(),
+              iconEmoji: r['icon_emoji']?.toString() ?? '💎',
+            );
+          }).toList();
+        } catch (_) {}
+      })(),
+    ]);
+
+    if (loadedPerks.isEmpty) {
       try {
         final baseUrl = AppConfig.socketUrl.replaceAll(RegExp(r'/+$'), '');
         final resp = await http
@@ -186,6 +213,7 @@ class _StonesRewardsScreenState extends State<StonesRewardsScreen> {
     if (mounted) {
       setState(() {
         _catalogPerks = loadedPerks;
+        _recomputeBestBundle();
         _isLoading = false;
       });
     }
@@ -206,6 +234,7 @@ class _StonesRewardsScreenState extends State<StonesRewardsScreen> {
         setState(() {
           _liveStonesBalance = (parsed['stones_balance'] as num?)?.toInt() ?? _liveStonesBalance;
           _streakCount = (parsed['streak_count'] as num?)?.toInt() ?? _streakCount;
+          _recomputeBestBundle();
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -271,6 +300,7 @@ class _StonesRewardsScreenState extends State<StonesRewardsScreen> {
           } else {
             _equippedPerkIds.add(perk.id);
           }
+          _recomputeBestBundle();
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -300,14 +330,8 @@ class _StonesRewardsScreenState extends State<StonesRewardsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Runs 0/1 Knapsack DP silently in the background to recommend the best perk bundle for the student's real balance
-    final lockedPerks = _catalogPerks.where((p) => !_unlockedPerkIds.contains(p.id)).toList();
-    final bestBundle = lockedPerks.isNotEmpty && _liveStonesBalance > 0
-        ? KnapsackStonesEngine.solvePerkLoadout(
-            items: lockedPerks,
-            walletCapacity: _liveStonesBalance,
-          )
-        : null;
+    final lockedPerks = _cachedLockedPerks;
+    final bestBundle = _cachedBestBundle;
 
     return Scaffold(
       backgroundColor: const Color(0xFFFFF9F0),
@@ -331,7 +355,7 @@ class _StonesRewardsScreenState extends State<StonesRewardsScreen> {
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
-                color: const Color(0xFF1E1B18),
+                color: Color(0xFF1E1B18),
                 letterSpacing: -0.3,
               ),
             ),
@@ -340,7 +364,7 @@ class _StonesRewardsScreenState extends State<StonesRewardsScreen> {
         actions: [
           IconButton(
             tooltip: 'Refresh Wallet',
-            icon: const Icon(Icons.refresh_rounded, color: const Color(0xFF44403C), size: 20),
+            icon: const Icon(Icons.refresh_rounded, color: Color(0xFF44403C), size: 20),
             onPressed: _loadLiveStonesData,
           ),
         ],
@@ -389,7 +413,7 @@ class _StonesRewardsScreenState extends State<StonesRewardsScreen> {
                                 Text(
                                   '$_liveStonesBalance Stones',
                                   style: const TextStyle(
-                                    color: const Color(0xFF1E1B18),
+                                    color: Color(0xFF1E1B18),
                                     fontWeight: FontWeight.w900,
                                     fontSize: 22,
                                     letterSpacing: -0.5,
@@ -556,7 +580,7 @@ class _StonesRewardsScreenState extends State<StonesRewardsScreen> {
                                       Text(
                                         perk.name,
                                         style: const TextStyle(
-                                          color: const Color(0xFF1E1B18),
+                                          color: Color(0xFF1E1B18),
                                           fontWeight: FontWeight.w700,
                                           fontSize: 13.5,
                                         ),
